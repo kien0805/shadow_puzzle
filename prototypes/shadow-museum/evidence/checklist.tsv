@@ -1,0 +1,21 @@
+L1	pass	evidence/figures.png	six smooth vector objects with gradients, black silhouettes until solved, warm spotlight when done
+L2	pass	evidence/obj4.png	silhouette in a scene filled by blocks carrying the picture
+L3	pass	evidence/play.png	2D fixed portrait, zooms from the hall into one object
+F1	pass	evidence/hub.png	hall with six different objects, unsolved ones black
+F2	pass	index.html:392	block snaps if dropped near its true cells, otherwise shakes and returns
+F3	pass	evidence/obj6.png	bands for 1-2, compact L/T/Z for 3-4, odd shapes plus decoys for 5-6
+F4	pass	evidence/timeout.png	countdown per object, red and ticking in the last 10 s
+F5	pass	evidence/timeout.png	time out shows Het gio with Thu lai; only this object restarts
+F6	pass	index.html:405	hint places one block and takes 5 s off the clock
+F7	pass	evidence/opened.png	solved object glows; all six open the museum with visitors walking in
+M1	pass	evidence/hub.png	hall with six shadows on pedestals
+M2	pass	evidence/play.png	object 1 opens with a 60 s clock and 3 straight-cut blocks
+M3	pass	evidence/won1.png	block snaps in and its picture shows
+M4	pass	evidence/won1.png	full bust glows and offers Ve bao tang
+M5	pass	evidence/opened.png	the solved bust stands coloured on pedestal 1 under a spotlight
+C1	pass	config.js:9	objects 1-2: 3-4 straight blocks, 60 s
+C2	pass	config.js:30	objects 3-4: 6-8 compact blocks, 75 s
+C3	pass	evidence/obj6.png	objects 5-6: 10-12 odd blocks plus decoys, 90 s
+C4	pass	config.js:15	last 10 s: red clock and tick
+C5	pass	config.js:16	hint costs 5 s
+C6	pass	evidence/timeout.png	time out: blocks back to the tray, replay this object; solved objects stay

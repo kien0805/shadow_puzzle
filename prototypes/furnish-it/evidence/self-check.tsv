@@ -1,0 +1,38 @@
+time	2026-11-15 09:23:33
+keep	lines	0	pinned	0
+checklist	L1	unlisted	-	Look: phong cách cozy pastel flat-lay. Nhìn từ trên xuống. Sàn gỗ màu kem nhạt, tường hồng đất và xanh mint. Nội thất vẽ bằng shape có bo góc, có chi tiết: gối trên giường, gân trên lá cây, gáy sách trên kệ. Bóng đổ mềm. Chi tiết đặc trưng: giải xong thì đèn bật vàng ấm, có con mèo nằm cuộn tròn và vài hạt bụi nắng bay. Mọi hình đều được vẽ, không dùng emoji, không dùng hình tròn trơn.	
+checklist	L2	unlisted	-	References: A Little to the Left (lấy palette pastel và cảm giác xếp đồ thư giãn), Room Sort (lấy kiểu khối điền vào lưới mặt bằng).	
+checklist	L3	unlisted	-	View: 2D · Camera: top-down cố định, màn dọc như điện thoại.	
+checklist	F1	unlisted	-	6 phòng (phòng ngủ, phòng khách, bếp, phòng tắm, phòng làm việc, ban công), mỗi phòng một bộ nội thất riêng	
+checklist	F2	unlisted	-	Kéo thả có xem trước ô xanh/đỏ, khối hít vào lưới	
+checklist	F3	unlisted	-	Xoay khối (từ phòng 3)	
+checklist	F4	unlisted	-	Ô chặn cố định (từ phòng 4)	
+checklist	F5	unlisted	-	Màn "lên đèn" khi giải xong: đèn ấm, mèo, bụi nắng	
+checklist	F6	unlisted	-	Nút làm lại và nút gợi ý (đặt hộ 1 món đúng chỗ)	
+checklist	F7	unlisted	-	Màn kết: toàn cảnh căn nhà	
+checklist	M1	unlisted	-	Phòng 1 có lưới 4×4, vài ô trống, khay chỉ có 3 món.	
+checklist	M2	unlisted	-	Một bàn tay gợi ý kéo chiếc giường vào.	
+checklist	M3	unlisted	-	Khi khối vừa chỗ, nó "bụp" vào lưới kèm tiếng nhẹ.	
+checklist	M4	unlisted	-	Khi kéo qua lưới, ô xanh là đặt được, ô đỏ là trùng.	
+checklist	M5	unlisted	-	Người chơi đặt nốt 2 món, phòng kín ô thì đèn bật ấm, mèo xuất hiện, hiện 3 ngôi sao trang trí.	
+checklist	M6	unlisted	-	Bấm "Phòng tiếp" để sang màn sau.	
+checklist	C1	unlisted	-	Màn 1–2 là dạy chơi.	
+checklist	C2	unlisted	-	Từ màn 3 bắt đầu được xoay khối.	
+checklist	C3	unlisted	-	Màn 4–6 có các ô bị chặn (cột, lò sưởi cố định), lưới to hơn và nhiều món hơn, phải thử vài cách mới ra.	
+checklist	C4	unlisted	-	Không có thua: đặt sai thì kéo khối trả về khay, hoặc bấm làm lại.	
+browser	HeadlessChrome/157.0.0.0
+scene	play	0	title
+scene	play	1	play
+digits	log	600 26px Nunito, "Segoe UI Rounded", "Segoe UI", system-ui, sans-serif	proportional	4.52
+digits	log	bold 28px Nunito, "Segoe UI Rounded", "Segoe UI", system-ui, sans-serif	tabular	0
+digits	log	bold 22px Nunito, "Segoe UI Rounded", "Segoe UI", system-ui, sans-serif	tabular	0
+measure	step-time	play	0.009	0.200	126
+lane	play	stop	2.1	694
+uncaught	play	0
+text	play	canvas	579,21,656,36	21.9	3.96	inside	Phòng 1/6
+text	play	canvas	558,39,677,63	31.2	7.46	inside	Phòng ngủ
+text	play	canvas	710,69,747,79	17.7	3.96	inside	0/12 ô
+text	play	canvas	503,439,777,455	20.3	7.46	inside	Kéo món đồ vào chỗ trống trong phòng
+screen	play	drawn
+shot	play	prototypes/furnish-it/evidence/play.png
+responds	changed	34

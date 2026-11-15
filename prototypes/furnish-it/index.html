@@ -1,0 +1,853 @@
+<!doctype html>
+<!-- PROTOTYPE - NOT FOR PRODUCTION -->
+<!-- Question: Lấp kín căn phòng bằng nội thất rồi được thưởng cảnh cozy có đủ thư giãn và đủ đã để chơi hết 6 phòng không? -->
+<!-- Date: 2026-11-15 -->
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Furnish It</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #f6ece2; overflow: hidden; touch-action: none; }
+  body { font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }
+  canvas { display: block; margin: 0 auto; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="config.js"></script>
+<script>
+'use strict';
+// Furnish It: drag furniture blocks into an empty room until every floor cell is filled.
+
+// ---- Built to be checked ----------------------------------------------------------------
+const params = new URLSearchParams(location.search);
+const tune = new Proxy({}, { get: (_, k) => CONFIG[k].value }); // live: tune.speed is CONFIG.speed.value
+const STEP = 1 / 60;            // simulation step in seconds; motion is per second, never per frame
+const W = 720, H = 1280;        // logical size: a phone held upright
+const PIXEL = false;
+const FONT = '"Nunito", "Segoe UI Rounded", "Segoe UI", system-ui, sans-serif';
+const TITLE = 'Furnish It';
+const CONTROLS = [
+  'Kéo món đồ từ khay vào chỗ trống',
+  'Chạm món đồ trong khay để xoay (từ phòng 3)',
+  'Kéo món đã đặt ra ngoài để cất lại',
+  'Phím: Q/E chọn · mũi tên di chuyển · R xoay · Space đặt',
+  'H gợi ý · Backspace làm lại · M tắt tiếng',
+];
+const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 };
+const CHEAP = params.get('render') === 'cheap';
+let seed;
+function rng() { // mulberry32; every gameplay random call reads this, never Math.random
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const events = [];
+
+// ---- Screen ---------------------------------------------------------------------------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let viewScale = 1;
+function fit() {
+  const k = Math.min(innerWidth / W, innerHeight / H);
+  const r = k * (devicePixelRatio || 1);
+  viewScale = k;
+  canvas.width = Math.round(W * r); canvas.height = Math.round(H * r);
+  canvas.style.width = Math.round(W * k) + 'px'; canvas.style.height = Math.round(H * k) + 'px';
+  canvas.style.marginTop = Math.max(0, Math.floor((innerHeight - H * k) / 2)) + 'px';
+  ctx.setTransform(r, 0, 0, r, 0, 0); ctx.imageSmoothingEnabled = true;
+}
+addEventListener('resize', fit); fit();
+function clear(c) { ctx.fillStyle = c; ctx.fillRect(0, 0, W, H); }
+function text(s, x, y, size, c, align = 'center', weight = '700') {
+  ctx.fillStyle = c; ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align;
+  ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+
+// ---- Palette (cozy pastel) ---------------------------------------------------------------
+const C = {
+  bg: '#f6ece2', ink: '#5d4640', inkSoft: '#8a6f66', line: '#6b5048',
+  wood: '#dcae80', woodDark: '#b98458', cream: '#fbf4e8', sage: '#a3c9a5', sageDark: '#6f9c74',
+  blush: '#f2b9b0', sky: '#a9cbe9', butter: '#f2cd7a', lav: '#c9b6e2', terra: '#d98f6a',
+  ok: 'rgba(120, 200, 140, 0.55)', bad: 'rgba(235, 110, 110, 0.5)', shadow: 'rgba(90, 60, 50, 0.18)',
+};
+const PAL = [C.blush, C.lav, C.sage, C.butter, C.sky, '#f4c6a0', '#b9dccf'];
+const TYPES = {
+  bed: 'Giường', wardrobe: 'Tủ áo', rug: 'Thảm', sofa: 'Sofa', shelf: 'Kệ sách', plant: 'Chậu cây',
+  planter: 'Bồn hoa', counter: 'Kệ bếp', stove: 'Bếp nấu', chair: 'Ghế', table: 'Bàn', tv: 'Kệ TV',
+  fridge: 'Tủ lạnh', sink: 'Bồn rửa', tub: 'Bồn tắm', shower: 'Vòi sen', toilet: 'Bồn cầu',
+  desk: 'Bàn làm việc', bench: 'Ghế dài',
+};
+
+// ---- Input: keys by position (event.code), pointer queued for the step -----------------
+const down = new Set(), hit = new Set();
+const pressed = code => hit.has(code);
+addEventListener('keydown', e => {
+  startAudio();
+  if (!e.repeat) { down.add(e.code); hit.add(e.code); }
+  if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Tab' || e.code === 'Backspace') e.preventDefault();
+});
+addEventListener('keyup', e => down.delete(e.code));
+addEventListener('blur', () => down.clear());
+const ptrQ = [];
+function toLogical(e) {
+  const b = canvas.getBoundingClientRect();
+  return { x: (e.clientX - b.left) * W / b.width, y: (e.clientY - b.top) * H / b.height };
+}
+canvas.addEventListener('pointerdown', e => {
+  startAudio(); canvas.setPointerCapture(e.pointerId);
+  ptrQ.push({ k: 'down', ...toLogical(e) }); e.preventDefault();
+});
+canvas.addEventListener('pointermove', e => { ptrQ.push({ k: 'move', ...toLogical(e) }); });
+canvas.addEventListener('pointerup', e => { ptrQ.push({ k: 'up', ...toLogical(e) }); });
+canvas.addEventListener('pointercancel', e => { ptrQ.push({ k: 'up', ...toLogical(e) }); });
+
+// ---- Audio --------------------------------------------------------------------------------
+let audio = null, muted = false;
+function startAudio() {
+  if (!audio) {
+    const ac = window.GAME_AUDIO || new (window.AudioContext || window.webkitAudioContext)();
+    const out = ac.createGain(); out.gain.value = muted ? 0 : tune.volume;
+    out.connect(ac.destination); audio = { ac, out };
+  }
+  if (audio.ac.state === 'suspended') audio.ac.resume();
+}
+function setMuted(m) { muted = m; if (audio) audio.out.gain.value = m ? 0 : tune.volume; }
+addEventListener('tune', () => setMuted(muted));
+function tone(freq, dur, type = 'sine', vol = 0.25, delay = 0) {
+  if (!audio || muted) return;
+  const t = audio.ac.currentTime + delay, o = audio.ac.createOscillator(), g = audio.ac.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(audio.out); o.start(t); o.stop(t + dur + 0.02);
+}
+const sfx = {
+  pick: () => tone(520, 0.08, 'sine', 0.15),
+  place: () => { tone(392, 0.12, 'triangle', 0.25); tone(587, 0.16, 'sine', 0.18, 0.05); },
+  back: () => tone(240, 0.12, 'sine', 0.15),
+  rotate: () => tone(660, 0.06, 'triangle', 0.12),
+  clear: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.35, 'sine', 0.2, i * 0.09)),
+};
+
+// ---- Drawing helpers ----------------------------------------------------------------------
+function rr(x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function fillRR(x, y, w, h, r, c) { rr(x, y, w, h, r); ctx.fillStyle = c; ctx.fill(); }
+function strokeRR(x, y, w, h, r, c, lw) { rr(x, y, w, h, r); ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.stroke(); }
+function ell(x, y, rx, ry, rot, c) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); }
+function line(x1, y1, x2, y2, c, lw) { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke(); }
+function shade(hex, k) { // k<0 darker, k>0 lighter
+  const n = parseInt(hex.slice(1), 16); let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  const f = v => Math.round(k < 0 ? v * (1 + k) : v + (255 - v) * k);
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+
+// Union of cells as one rounded body.
+function body(cells, x, y, cs, fill, pad) {
+  const set = new Set(cells.map(([r, c]) => r + ',' + c));
+  ctx.fillStyle = fill;
+  const rad = cs * 0.16;
+  for (const [r, c] of cells) {
+    const px = x + c * cs, py = y + r * cs;
+    rr(px + pad, py + pad, cs - 2 * pad, cs - 2 * pad, rad); ctx.fill();
+    const R = set.has(r + ',' + (c + 1)), D = set.has((r + 1) + ',' + c);
+    if (R) ctx.fillRect(px + cs / 2, py + pad, cs, cs - 2 * pad);
+    if (D) ctx.fillRect(px + pad, py + cs / 2, cs - 2 * pad, cs);
+    if (R && D && set.has((r + 1) + ',' + (c + 1))) ctx.fillRect(px + cs / 2, py + cs / 2, cs, cs);
+  }
+}
+function bbox(cells) {
+  let h = 0, w = 0; for (const [r, c] of cells) { h = Math.max(h, r + 1); w = Math.max(w, c + 1); }
+  return { w, h };
+}
+function isRect(cells) { const b = bbox(cells); return b.w * b.h === cells.length; }
+
+// ---- Furniture: every piece is drawn, each type with its own silhouette -------------------
+function drawPiece(type, cells, x, y, cs, color, alpha = 1, shadow = true) {
+  const minR = Math.min(...cells.map(q => q[0])), minC = Math.min(...cells.map(q => q[1]));
+  cells = cells.map(([r, c]) => [r - minR, c - minC]); x += minC * cs; y += minR * cs; // shapes are drawn from their own corner
+  ctx.save(); ctx.globalAlpha = alpha;
+  const pad = cs * 0.07, lw = Math.max(2, cs * 0.045);
+  if (shadow) body(cells.map(([r, c]) => [r, c]), x + cs * 0.05, y + cs * 0.07, cs, C.shadow, pad);
+  const base = baseColor(type, color);
+  body(cells, x, y, cs, C.line, pad - lw);
+  body(cells, x, y, cs, base, pad);
+  const b = bbox(cells);
+  const bx = x + pad, by = y + pad, bw = b.w * cs - 2 * pad, bh = b.h * cs - 2 * pad;
+  const per = PER_CELL[type];
+  if (per || !isRect(cells)) {
+    cells.forEach(([r, c], i) => (per || PER_CELL.rug)(x + c * cs + pad, y + r * cs + pad, cs - 2 * pad, color, i, cells, r, c));
+  } else if (RECT[type]) RECT[type](bx, by, bw, bh, cs, color);
+  ctx.restore();
+}
+function baseColor(type, color) {
+  return ({
+    bed: C.wood, wardrobe: '#e2bd93', rug: color, sofa: color, shelf: '#c99c70', plant: '#efe2cf',
+    planter: '#c98f62', counter: '#f7f2ea', stove: '#ece6df', chair: C.wood, table: '#e3bb8c',
+    tv: '#bf9068', fridge: '#eef3f5', sink: '#f7f2ea', tub: '#ffffff', shower: '#e2f0f5', toilet: '#ffffff',
+    desk: '#d9aa7c', bench: '#d4a377',
+  })[type] || color;
+}
+function leaf(x, y, len, wid, ang, c) {
+  ell(x + Math.cos(ang) * len / 2, y + Math.sin(ang) * len / 2, len / 2, wid / 2, ang, c);
+  line(x, y, x + Math.cos(ang) * len * 0.85, y + Math.sin(ang) * len * 0.85, shade(c, -0.25), Math.max(1, wid * 0.12));
+}
+function flower(x, y, s, c) {
+  for (let k = 0; k < 5; k++) { const a = k * Math.PI * 2 / 5; ell(x + Math.cos(a) * s * 0.55, y + Math.sin(a) * s * 0.55, s * 0.5, s * 0.36, a, c); }
+  ell(x, y, s * 0.32, s * 0.32, 0, '#f6d36b');
+}
+const PER_CELL = {
+  rug(x, y, s, color, i) {
+    const m = s * 0.18;
+    ctx.beginPath(); ctx.moveTo(x + s / 2, y + m); ctx.lineTo(x + s - m, y + s / 2); ctx.lineTo(x + s / 2, y + s - m); ctx.lineTo(x + m, y + s / 2); ctx.closePath();
+    ctx.strokeStyle = shade(color, 0.45); ctx.lineWidth = s * 0.06; ctx.stroke();
+    ell(x + s / 2, y + s / 2, s * 0.07, s * 0.07, 0, shade(color, -0.2));
+    for (let k = 0; k < 4; k++) ell(x + s * (0.12 + (k % 2) * 0.76), y + s * (0.12 + (k > 1) * 0.76), s * 0.04, s * 0.04, 0, shade(color, 0.5));
+  },
+  sofa(x, y, s, color) {
+    fillRR(x + s * 0.1, y + s * 0.1, s * 0.8, s * 0.8, s * 0.18, shade(color, 0.28));
+    strokeRR(x + s * 0.1, y + s * 0.1, s * 0.8, s * 0.8, s * 0.18, shade(color, -0.2), Math.max(1.5, s * 0.03));
+    line(x + s * 0.3, y + s * 0.5, x + s * 0.7, y + s * 0.5, shade(color, -0.12), s * 0.025);
+    ell(x + s * 0.5, y + s * 0.5, s * 0.04, s * 0.04, 0, shade(color, -0.25));
+  },
+  shelf(x, y, s, color, i) {
+    fillRR(x + s * 0.06, y + s * 0.06, s * 0.88, s * 0.88, s * 0.08, '#a87b55');
+    const cols = ['#e8a69a', '#9cc0de', '#f0cf7e', '#a8cfa8', '#c8b2e0', '#f3e3c8'];
+    let bx = x + s * 0.12; let k = i * 3;
+    while (bx < x + s * 0.84) {
+      const bw = s * (0.09 + ((k * 7) % 4) * 0.025), bh = s * (0.55 + ((k * 5) % 3) * 0.1);
+      fillRR(bx, y + s * 0.88 - bh, Math.min(bw, x + s * 0.88 - bx), bh, 2, cols[k % cols.length]);
+      line(bx + bw * 0.2, y + s * 0.88 - bh * 0.8, bx + bw * 0.8, y + s * 0.88 - bh * 0.8, 'rgba(255,255,255,0.6)', 1.5);
+      bx += bw + s * 0.015; k++;
+    }
+  },
+  plant(x, y, s, color, i) {
+    const cx = x + s / 2, cy = y + s / 2;
+    ell(cx, cy, s * 0.3, s * 0.3, 0, '#c97b55'); ell(cx, cy, s * 0.24, s * 0.24, 0, '#6e4a36');
+    const g = [C.sageDark, '#7fb07f', '#5f8f64'];
+    for (let k = 0; k < 7; k++) leaf(cx, cy, s * 0.42, s * 0.17, k * 0.9 + i, g[k % 3]);
+  },
+  planter(x, y, s, color, i) {
+    fillRR(x + s * 0.1, y + s * 0.1, s * 0.8, s * 0.8, s * 0.08, '#7a5440');
+    const fc = ['#f29eab', '#f6c56b', '#c7a7ec', '#f7f0e6'];
+    for (let k = 0; k < 4; k++) leaf(x + s * 0.5, y + s * 0.5, s * 0.36, s * 0.13, k * 1.57 + 0.6, '#76a978');
+    flower(x + s * 0.32, y + s * 0.33, s * 0.12, fc[i % 4]);
+    flower(x + s * 0.66, y + s * 0.42, s * 0.11, fc[(i + 1) % 4]);
+    flower(x + s * 0.42, y + s * 0.68, s * 0.1, fc[(i + 2) % 4]);
+  },
+  counter(x, y, s, color, i) {
+    line(x + s * 0.15, y + s * 0.3, x + s * 0.55, y + s * 0.62, '#d9d2cb', 1.5);
+    line(x + s * 0.5, y + s * 0.2, x + s * 0.85, y + s * 0.4, '#e2dbd4', 1.2);
+    fillRR(x + s * 0.06, y + s * 0.8, s * 0.88, s * 0.12, 3, '#c9b8a8');
+    ell(x + s * 0.5, y + s * 0.86, s * 0.06, s * 0.035, 0, '#8d7766');
+  },
+  stove(x, y, s) {
+    for (const [px, py] of [[0.32, 0.32], [0.68, 0.68]]) {
+      ctx.beginPath(); ctx.arc(x + s * px, y + s * py, s * 0.17, 0, Math.PI * 2); ctx.strokeStyle = '#4b3d3a'; ctx.lineWidth = s * 0.05; ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + s * px, y + s * py, s * 0.08, 0, Math.PI * 2); ctx.lineWidth = s * 0.03; ctx.stroke();
+    }
+    ell(x + s * 0.75, y + s * 0.22, s * 0.05, s * 0.05, 0, '#e38b6f'); ell(x + s * 0.25, y + s * 0.78, s * 0.05, s * 0.05, 0, '#e38b6f');
+  },
+  chair(x, y, s, color) {
+    fillRR(x + s * 0.14, y + s * 0.08, s * 0.72, s * 0.2, s * 0.08, C.woodDark);
+    fillRR(x + s * 0.18, y + s * 0.32, s * 0.64, s * 0.56, s * 0.14, shade(color, 0.2));
+    strokeRR(x + s * 0.18, y + s * 0.32, s * 0.64, s * 0.56, s * 0.14, shade(color, -0.25), 2);
+  },
+};
+const RECT = {
+  bed(x, y, w, h, cs, color) {
+    const vert = h >= w, m = cs * 0.08;
+    fillRR(x + m, y + m, w - 2 * m, h - 2 * m, cs * 0.12, C.cream);
+    const blanket = shade(C.sky, 0.05);
+    if (vert) {
+      fillRR(x + m, y + h * 0.36, w - 2 * m, h * 0.64 - m, cs * 0.12, blanket);
+      fillRR(x + m, y + h * 0.36, w - 2 * m, h * 0.08, 4, shade(C.sky, 0.45));
+      for (let k = 0; k < 4; k++) line(x + m * 2, y + h * (0.55 + k * 0.1), x + w - m * 2, y + h * (0.55 + k * 0.1), shade(C.sky, -0.12), 1.5);
+      const pw = (w - 4 * m) / 2;
+      for (let k = 0; k < 2; k++) { fillRR(x + 2 * m + k * (pw + 0.5 * m), y + h * 0.08, pw - 0.5 * m, h * 0.18, cs * 0.12, '#fffaf3'); strokeRR(x + 2 * m + k * (pw + 0.5 * m), y + h * 0.08, pw - 0.5 * m, h * 0.18, cs * 0.12, '#e3d3c2', 2); }
+    } else {
+      fillRR(x + w * 0.36, y + m, w * 0.64 - m, h - 2 * m, cs * 0.12, blanket);
+      fillRR(x + w * 0.36, y + m, w * 0.08, h - 2 * m, 4, shade(C.sky, 0.45));
+      for (let k = 0; k < 4; k++) line(x + w * (0.55 + k * 0.1), y + m * 2, x + w * (0.55 + k * 0.1), y + h - m * 2, shade(C.sky, -0.12), 1.5);
+      const ph = (h - 4 * m) / 2;
+      for (let k = 0; k < 2; k++) { fillRR(x + w * 0.08, y + 2 * m + k * (ph + 0.5 * m), w * 0.18, ph - 0.5 * m, cs * 0.12, '#fffaf3'); strokeRR(x + w * 0.08, y + 2 * m + k * (ph + 0.5 * m), w * 0.18, ph - 0.5 * m, cs * 0.12, '#e3d3c2', 2); }
+    }
+  },
+  wardrobe(x, y, w, h, cs) {
+    const vert = h >= w;
+    strokeRR(x + cs * 0.08, y + cs * 0.08, w - cs * 0.16, h - cs * 0.16, cs * 0.06, '#b98d62', 2);
+    if (vert) { line(x + w / 2, y + cs * 0.1, x + w / 2, y + h - cs * 0.1, '#b98d62', 2); ell(x + w / 2 - cs * 0.08, y + h / 2, cs * 0.035, cs * 0.06, 0, '#8a6345'); ell(x + w / 2 + cs * 0.08, y + h / 2, cs * 0.035, cs * 0.06, 0, '#8a6345'); }
+    else { line(x + cs * 0.1, y + h / 2, x + w - cs * 0.1, y + h / 2, '#b98d62', 2); ell(x + w / 2, y + h / 2 - cs * 0.08, cs * 0.06, cs * 0.035, 0, '#8a6345'); ell(x + w / 2, y + h / 2 + cs * 0.08, cs * 0.06, cs * 0.035, 0, '#8a6345'); }
+  },
+  table(x, y, w, h, cs) {
+    for (let k = 1; k < 4; k++) line(x + cs * 0.1, y + h * k / 4, x + w - cs * 0.1, y + h * k / 4 + cs * 0.03, '#cfa274', 1.5);
+    if (w > cs * 0.9 && h > cs * 0.9) {
+      for (const [px, py] of [[0.28, 0.3], [0.72, 0.7]]) { ell(x + w * px, y + h * py, cs * 0.2, cs * 0.2, 0, '#fffaf3'); ctx.beginPath(); ctx.arc(x + w * px, y + h * py, cs * 0.13, 0, Math.PI * 2); ctx.strokeStyle = '#e8d6c2'; ctx.lineWidth = 2; ctx.stroke(); }
+    }
+    ell(x + w / 2, y + h / 2, cs * 0.12, cs * 0.12, 0, '#9cc0de');
+    flower(x + w / 2, y + h / 2, cs * 0.07, '#f29eab');
+  },
+  tv(x, y, w, h, cs) {
+    const vert = h >= w;
+    if (vert) { fillRR(x + w * 0.2, y + cs * 0.15, w * 0.32, h - cs * 0.3, 4, '#3f3a45'); line(x + w * 0.3, y + cs * 0.25, x + w * 0.3, y + h * 0.4, 'rgba(255,255,255,0.35)', 2); ell(x + w * 0.75, y + h * 0.8, cs * 0.1, cs * 0.1, 0, '#7fb07f'); }
+    else { fillRR(x + cs * 0.15, y + h * 0.2, w - cs * 0.3, h * 0.32, 4, '#3f3a45'); line(x + cs * 0.25, y + h * 0.3, x + w * 0.4, y + h * 0.3, 'rgba(255,255,255,0.35)', 2); ell(x + w * 0.8, y + h * 0.75, cs * 0.1, cs * 0.1, 0, '#7fb07f'); }
+    for (let k = 0; k < 3; k++) ell(vert ? x + w * 0.75 : x + w * (0.3 + k * 0.15), vert ? y + h * (0.3 + k * 0.12) : y + h * 0.75, cs * 0.035, cs * 0.035, 0, '#8a6345');
+  },
+  fridge(x, y, w, h, cs) {
+    const vert = h >= w;
+    if (vert) { line(x + cs * 0.1, y + h * 0.4, x + w - cs * 0.1, y + h * 0.4, '#c9d3d8', 2); fillRR(x + w * 0.75, y + h * 0.12, cs * 0.07, h * 0.2, 3, '#9aa8b0'); fillRR(x + w * 0.75, y + h * 0.5, cs * 0.07, h * 0.3, 3, '#9aa8b0'); }
+    else { line(x + w * 0.4, y + cs * 0.1, x + w * 0.4, y + h - cs * 0.1, '#c9d3d8', 2); fillRR(x + w * 0.12, y + h * 0.75, w * 0.2, cs * 0.07, 3, '#9aa8b0'); fillRR(x + w * 0.5, y + h * 0.75, w * 0.3, cs * 0.07, 3, '#9aa8b0'); }
+    ell(x + w * 0.3, y + h * 0.2, cs * 0.07, cs * 0.07, 0, '#f2b9b0'); ell(x + w * 0.45, y + h * 0.26, cs * 0.06, cs * 0.06, 0, '#f2cd7a');
+  },
+  sink(x, y, w, h, cs) {
+    const bw = Math.min(w, h) * 0.7, cx = x + w / 2, cy = y + h / 2, lw = Math.max(w, h) * 0.45;
+    const vw = h >= w ? bw : lw, vh = h >= w ? lw : bw;
+    fillRR(cx - vw / 2, cy - vh / 2, vw, vh, cs * 0.15, '#cfe3ec'); strokeRR(cx - vw / 2, cy - vh / 2, vw, vh, cs * 0.15, '#a9bfca', 2);
+    ell(cx, cy, cs * 0.04, cs * 0.04, 0, '#7f949e');
+    if (h >= w) fillRR(x + w * 0.82, cy - cs * 0.05, cs * 0.12, cs * 0.1, 3, '#9aa8b0'); else fillRR(cx - cs * 0.05, y + h * 0.06, cs * 0.1, cs * 0.12, 3, '#9aa8b0');
+  },
+  tub(x, y, w, h, cs) {
+    const m = cs * 0.14;
+    fillRR(x + m, y + m, w - 2 * m, h - 2 * m, cs * 0.3, '#bfe0ee'); strokeRR(x + m, y + m, w - 2 * m, h - 2 * m, cs * 0.3, '#9cc6d8', 2);
+    line(x + m * 2.2, y + m * 2.4, x + w * 0.45, y + m * 2.4, 'rgba(255,255,255,0.8)', 3);
+    ell(x + w * 0.62, y + h * 0.6, cs * 0.12, cs * 0.09, 0.4, '#fff7e8');
+    ell(x + w * 0.68, y + h * 0.66, cs * 0.08, cs * 0.06, -0.3, '#fff7e8');
+    fillRR(x + w / 2 - cs * 0.08, y + cs * 0.03, cs * 0.16, cs * 0.1, 3, '#9aa8b0');
+  },
+  shower(x, y, w, h, cs) {
+    for (let k = 1; k < 4; k++) { line(x + w * k / 4, y + 3, x + w * k / 4, y + h - 3, '#c2dde7', 1.5); line(x + 3, y + h * k / 4, x + w - 3, y + h * k / 4, '#c2dde7', 1.5); }
+    ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, cs * 0.12, 0, Math.PI * 2); ctx.fillStyle = '#b7c4ca'; ctx.fill();
+    line(x + w / 2 - cs * 0.08, y + h / 2, x + w / 2 + cs * 0.08, y + h / 2, '#7f949e', 2); line(x + w / 2, y + h / 2 - cs * 0.08, x + w / 2, y + h / 2 + cs * 0.08, '#7f949e', 2);
+    ell(x + w * 0.2, y + h * 0.2, cs * 0.14, cs * 0.14, 0, '#9aa8b0'); ell(x + w * 0.2, y + h * 0.2, cs * 0.09, cs * 0.09, 0, '#d8e4ea');
+    line(x + w - 4, y + 4, x + w - 4, y + h - 4, 'rgba(120,170,200,0.6)', 4);
+  },
+  toilet(x, y, w, h, cs) {
+    fillRR(x + w * 0.18, y + h * 0.06, w * 0.64, h * 0.22, cs * 0.06, '#f1f4f6'); strokeRR(x + w * 0.18, y + h * 0.06, w * 0.64, h * 0.22, cs * 0.06, '#c5cfd5', 2);
+    ell(x + w / 2, y + h * 0.6, w * 0.3, h * 0.32, 0, '#e9eef1'); ell(x + w / 2, y + h * 0.62, w * 0.19, h * 0.21, 0, '#cfe3ec');
+  },
+  desk(x, y, w, h, cs) {
+    const vert = h >= w, cx = x + w / 2, cy = y + h / 2;
+    fillRR(cx - cs * 0.3, cy - cs * 0.2, cs * 0.6, cs * 0.4, 5, '#8e8a99'); fillRR(cx - cs * 0.26, cy - cs * 0.16, cs * 0.52, cs * 0.28, 3, '#cfd8e8');
+    line(cx - cs * 0.3, cy + cs * 0.2, cx + cs * 0.3, cy + cs * 0.2, '#5e5a66', 3);
+    const mx = vert ? cx : x + cs * 0.4, my = vert ? y + cs * 0.4 : cy;
+    if (Math.max(w, h) > cs * 1.6) { ctx.beginPath(); ctx.arc(mx, my, cs * 0.1, 0, Math.PI * 2); ctx.fillStyle = '#f2b9b0'; ctx.fill(); ctx.beginPath(); ctx.arc(mx, my, cs * 0.065, 0, Math.PI * 2); ctx.fillStyle = '#8a5a3e'; ctx.fill(); ctx.beginPath(); ctx.arc(mx + cs * 0.12, my, cs * 0.04, -1.2, 1.2); ctx.strokeStyle = '#f2b9b0'; ctx.lineWidth = 3; ctx.stroke();
+      const px2 = vert ? cx : x + w - cs * 0.45, py2 = vert ? y + h - cs * 0.45 : cy;
+      ctx.save(); ctx.translate(px2, py2); ctx.rotate(0.15); fillRR(-cs * 0.16, -cs * 0.2, cs * 0.32, cs * 0.4, 2, '#fffaf3'); for (let k = 0; k < 3; k++) line(-cs * 0.1, -cs * 0.1 + k * cs * 0.09, cs * 0.1, -cs * 0.1 + k * cs * 0.09, '#cbbdb0', 1.5); ctx.restore(); }
+  },
+  bench(x, y, w, h, cs) {
+    const vert = h >= w;
+    for (let k = 1; k < 4; k++) vert ? line(x + w * k / 4, y + cs * 0.12, x + w * k / 4, y + h - cs * 0.12, '#a87b55', 2) : line(x + cs * 0.12, y + h * k / 4, x + w - cs * 0.12, y + h * k / 4, '#a87b55', 2);
+    const cx = vert ? x + w / 2 : x + w * 0.3, cy = vert ? y + h * 0.3 : y + h / 2;
+    fillRR(cx - cs * 0.2, cy - cs * 0.2, cs * 0.4, cs * 0.4, cs * 0.1, '#f2b9b0'); strokeRR(cx - cs * 0.2, cy - cs * 0.2, cs * 0.4, cs * 0.4, cs * 0.1, '#d48f86', 2);
+  },
+};
+
+// The fixed built-in on a '#' cell: a hatched pillar in the wall's colour.
+function drawBuiltIn(x, y, cs, wall) {
+  fillRR(x + 2, y + 2, cs - 4, cs - 4, cs * 0.1, shade(wall, -0.12));
+  ctx.save(); rr(x + 2, y + 2, cs - 4, cs - 4, cs * 0.1); ctx.clip();
+  for (let k = -cs; k < cs * 2; k += cs * 0.18) line(x + k, y, x + k + cs, y + cs, shade(wall, -0.25), 2);
+  ctx.restore();
+  strokeRR(x + 2, y + 2, cs - 4, cs - 4, cs * 0.1, shade(wall, -0.4), 2.5);
+  fillRR(x + cs * 0.3, y + cs * 0.3, cs * 0.4, cs * 0.4, cs * 0.08, shade(wall, 0.25));
+}
+
+// A curled sleeping cat: the room's reward.
+function drawCat(cx, cy, s, t) {
+  const breathe = 1 + Math.sin(t * 2) * 0.03;
+  ell(cx + s * 0.04, cy + s * 0.08, s * 0.42, s * 0.3, 0, 'rgba(90,60,50,0.18)');
+  ctx.beginPath(); ctx.arc(cx + s * 0.05, cy + s * 0.02, s * 0.36, 0.3, 2.6); ctx.strokeStyle = '#e39a5c'; ctx.lineWidth = s * 0.12; ctx.lineCap = 'round'; ctx.stroke();
+  ell(cx, cy, s * 0.38 * breathe, s * 0.27 * breathe, 0, '#f0b070');
+  for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(cx + s * 0.05, cy, s * (0.12 + k * 0.07), -2.4, -1.2); ctx.strokeStyle = '#e0955a'; ctx.lineWidth = s * 0.035; ctx.stroke(); }
+  const hx = cx - s * 0.26, hy = cy - s * 0.05;
+  for (const d of [-1, 1]) { ctx.beginPath(); ctx.moveTo(hx + d * s * 0.05 - s * 0.06, hy - s * 0.1); ctx.lineTo(hx + d * s * 0.12 - s * 0.04, hy - s * 0.27); ctx.lineTo(hx + d * s * 0.16, hy - s * 0.06); ctx.closePath(); ctx.fillStyle = '#f0b070'; ctx.fill(); }
+  ell(hx, hy, s * 0.19, s * 0.16, 0, '#f4bd82');
+  for (const d of [-1, 1]) { ctx.beginPath(); ctx.arc(hx + d * s * 0.07, hy, s * 0.04, 0.2, Math.PI - 0.2); ctx.strokeStyle = '#5d4640'; ctx.lineWidth = 2; ctx.stroke(); }
+  ell(hx, hy + s * 0.06, s * 0.025, s * 0.018, 0, '#d97c78');
+}
+
+// The tutorial hand: a pointing finger.
+function drawHand(x, y, s) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(-0.35);
+  fillRR(-s * 0.09, -s * 0.05, s * 0.18, s * 0.5, s * 0.09, '#fff3e8');
+  fillRR(-s * 0.22, s * 0.25, s * 0.5, s * 0.42, s * 0.16, '#fff3e8');
+  strokeRR(-s * 0.09, -s * 0.05, s * 0.18, s * 0.5, s * 0.09, C.line, 3);
+  strokeRR(-s * 0.22, s * 0.25, s * 0.5, s * 0.42, s * 0.16, C.line, 3);
+  fillRR(-s * 0.09, s * 0.2, s * 0.17, s * 0.12, 4, '#fff3e8');
+  fillRR(-s * 0.26, s * 0.62, s * 0.58, s * 0.14, 5, C.sky); strokeRR(-s * 0.26, s * 0.62, s * 0.58, s * 0.14, 5, C.line, 3);
+  ctx.restore();
+}
+function drawStar(x, y, r, c) {
+  ctx.beginPath();
+  for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rad = k % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); }
+  ctx.closePath(); ctx.fillStyle = c; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.stroke();
+}
+
+// ---- Room geometry --------------------------------------------------------------------------
+function rotCells(base, rot) {
+  let cells = base.map(([r, c]) => [r, c]);
+  for (let k = 0; k < rot; k++) { const h = bbox(cells).h; cells = cells.map(([r, c]) => [c, h - 1 - r]); }
+  return cells;
+}
+const cellsOf = p => rotCells(p.base, p.rot);
+function roomLayout(rows, cols, box) {
+  const cs = Math.min(tune.cell_max, box.w / (cols + 0.8), box.h / (rows + 0.8));
+  return { cs, gx: box.x + (box.w - cols * cs) / 2, gy: box.y + (box.h - rows * cs) / 2, rows, cols };
+}
+const ROOM_BOX = { x: 30, y: 170, w: 660, h: 600 };
+const TRAY_BOX = { x: 20, y: 800, w: 680, h: 400 };
+function trayLayout() {
+  const ps = state.pieces, n = ps.length;
+  const maxDim = Math.max(...ps.map(p => Math.max(bbox(p.base).w, bbox(p.base).h)));
+  let tc = tune.tray_cell, slot, per, rowsN;
+  for (;;) {
+    slot = maxDim * tc + 22; per = Math.max(1, Math.floor((TRAY_BOX.w - 20) / slot)); rowsN = Math.ceil(n / per);
+    if (rowsN * slot <= TRAY_BOX.h - 30 || tc <= 12) break;
+    tc -= 1;
+  }
+  const slots = [];
+  for (let i = 0; i < n; i++) {
+    const row = Math.floor(i / per), inRow = Math.min(per, n - row * per), col = i % per;
+    const x0 = TRAY_BOX.x + (TRAY_BOX.w - inRow * slot) / 2 + col * slot;
+    const y0 = TRAY_BOX.y + 22 + (TRAY_BOX.h - 30 - rowsN * slot) / 2 + row * slot;
+    slots.push({ x: x0, y: y0, s: slot });
+  }
+  return { tc, slots };
+}
+function trayPos(p, tl) { // top-left of the piece's cells in the tray
+  const sl = tl.slots[p.slot], b = bbox(cellsOf(p));
+  return { x: sl.x + (sl.s - b.w * tl.tc) / 2, y: sl.y + (sl.s - b.h * tl.tc) / 2 };
+}
+function absCells(p) { return cellsOf(p).map(([r, c]) => [r + p.placed.r, c + p.placed.c]); }
+function occupancy(except) {
+  const occ = new Map();
+  for (const p of state.pieces) if (p.placed && p !== except) for (const [r, c] of absCells(p)) occ.set(r + ',' + c, p);
+  return occ;
+}
+function canPlace(p, r0, c0) {
+  const R = state.room, occ = occupancy(p);
+  return cellsOf(p).every(([r, c]) => {
+    const rr2 = r + r0, cc = c + c0;
+    return rr2 >= 0 && cc >= 0 && rr2 < R.rows && cc < R.cols && !R.blocked.has(rr2 + ',' + cc) && !occ.has(rr2 + ',' + cc);
+  });
+}
+function filledCount() { let n = 0; for (const p of state.pieces) if (p.placed) n += p.base.length; return n; }
+
+// ---- State ----------------------------------------------------------------------------------
+let scene, state;
+function reset() {
+  seed = Number(params.get('seed')) || CONFIG.seed;
+  state = { t: 0, score: 0, gained: '', level: 0, done: [], hints: 0, moves: 0 };
+  loadLevel(Math.max(0, Math.min(LEVELS.length - 1, (Number(params.get('room')) || 1) - 1)));
+}
+function loadLevel(i) {
+  const L = LEVELS[i], rows = L.map.length, cols = L.map[0].length;
+  const groups = {}, blocked = new Set();
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const ch = L.map[r][c];
+    if (ch === '#') blocked.add(r + ',' + c); else (groups[ch] = groups[ch] || []).push([r, c]);
+  }
+  const pieces = Object.keys(groups).sort().map((k, idx) => {
+    const cells = groups[k], minR = Math.min(...cells.map(x => x[0])), minC = Math.min(...cells.map(x => x[1]));
+    return { id: k, type: L.types[k] || 'rug', base: cells.map(([r, c]) => [r - minR, c - minC]), rot: 0, placed: null,
+      sol: { r: minR, c: minC }, color: PAL[idx % PAL.length], slot: idx };
+  });
+  if (i + 1 >= tune.shuffle_from) {
+    const order = pieces.map((_, k) => k);
+    for (let k = order.length - 1; k > 0; k--) { const j = Math.floor(rng() * (k + 1)); [order[k], order[j]] = [order[j], order[k]]; }
+    pieces.forEach((p, k) => { p.slot = order[k]; });
+  }
+  if (i + 1 >= tune.rotate_from) pieces.forEach(p => { p.rot = 1 + Math.floor(rng() * 3); });
+  state.level = i;
+  state.room = { name: L.name, wall: L.wall, floor: L.floor, rows, cols, blocked, free: rows * cols - blocked.size };
+  state.pieces = pieces; state.drag = null; state.sel = 0; state.cur = { r: 0, c: 0 }; state.kb = false;
+  state.clearedAt = null; state.motes = []; state.levelT = 0; state.touched = false; state.roomHints = 0;
+  state.lay = roomLayout(rows, cols, ROOM_BOX);
+  state.tray = trayLayout();
+  events.push({ e: 'room', i });
+}
+const canRotate = () => state.level + 1 >= tune.rotate_from;
+function unplaced() { return state.pieces.filter(p => !p.placed).sort((a, b) => a.slot - b.slot); }
+
+function placePiece(p, r, c) {
+  p.placed = { r, c }; state.moves++; state.touched = true; sfx.place();
+  events.push({ e: 'place', id: p.id, r, c });
+  if (filledCount() === state.room.free) roomCleared();
+}
+function roomCleared() {
+  state.clearedAt = state.levelT; sfx.clear();
+  const L = state.lay;
+  state.motes = [];
+  for (let k = 0; k < tune.motes; k++) state.motes.push({ x: L.gx + rng() * L.cols * L.cs, y: L.gy + rng() * L.rows * L.cs, s: 1.5 + rng() * 3, ph: rng() * 6.28, v: 6 + rng() * 10 });
+  state.done[state.level] = state.pieces.map(p => ({ type: p.type, color: p.color, cells: absCells(p) }));
+  state.score += 1;
+  events.push({ e: 'clear', i: state.level });
+}
+function nextRoom() {
+  if (state.level + 1 >= LEVELS.length) { state.gained = 'Căn nhà đã hoàn thành!'; scene = 'results'; return; }
+  loadLevel(state.level + 1);
+}
+function useHint() {
+  if (state.clearedAt !== null) return;
+  const same = (a, b) => a.length === b.length && a.every(([r, c]) => b.some(([r2, c2]) => r2 === r && c2 === c));
+  for (const p of state.pieces) {
+    const solCells = p.base.map(([r, c]) => [r + p.sol.r, c + p.sol.c]);
+    if (p.placed && same(absCells(p), solCells)) continue;
+    const solSet = new Set(solCells.map(([r, c]) => r + ',' + c));
+    for (const q of state.pieces) if (q !== p && q.placed && absCells(q).some(([r, c]) => solSet.has(r + ',' + c))) q.placed = null;
+    p.rot = 0; p.placed = null; state.hints++; state.roomHints++;
+    placePiece(p, p.sol.r, p.sol.c);
+    return;
+  }
+}
+function resetRoom() { if (state.clearedAt === null) { state.pieces.forEach(p => { p.placed = null; }); sfx.back(); } }
+
+// ---- Buttons ----------------------------------------------------------------------------
+const BTN = {
+  reset: { x: 30, y: 30, w: 76, h: 76 },
+  hint: { x: 614, y: 30, w: 76, h: 76 },
+  mute: { x: 530, y: 30, w: 76, h: 76 },
+  next: { x: 210, y: 1110, w: 300, h: 96 },
+  start: { x: 210, y: 1000, w: 300, h: 104 },
+  again: { x: 210, y: 1150, w: 300, h: 96 },
+};
+const inBtn = (b, p) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+function drawButton(b, label, c, size = 36) {
+  fillRR(b.x, b.y + 6, b.w, b.h, b.h / 2, shade(c, -0.3));
+  fillRR(b.x, b.y, b.w, b.h, b.h / 2, c); strokeRR(b.x, b.y, b.w, b.h, b.h / 2, C.line, 3);
+  text(label, b.x + b.w / 2, b.y + b.h / 2 + 2, size, C.ink);
+}
+function drawIconBtn(b, kind) {
+  fillRR(b.x, b.y + 5, b.w, b.h, 22, '#d9c6b5'); fillRR(b.x, b.y, b.w, b.h, 22, C.cream); strokeRR(b.x, b.y, b.w, b.h, 22, C.line, 3);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  ctx.strokeStyle = C.ink; ctx.fillStyle = C.ink; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  if (kind === 'reset') {
+    ctx.beginPath(); ctx.arc(cx, cy, 18, -0.4, Math.PI * 1.55); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + 22, cy - 18); ctx.lineTo(cx + 18, cy - 4); ctx.lineTo(cx + 6, cy - 12); ctx.closePath(); ctx.fill();
+  } else if (kind === 'hint') {
+    ctx.beginPath(); ctx.arc(cx, cy - 6, 15, Math.PI * 0.8, Math.PI * 2.2); ctx.fillStyle = C.butter; ctx.fill(); ctx.stroke();
+    fillRR(cx - 8, cy + 8, 16, 12, 3, C.inkSoft); line(cx - 5, cy + 24, cx + 5, cy + 24, C.ink, 4);
+  } else {
+    ctx.beginPath(); ctx.moveTo(cx - 20, cy - 8); ctx.lineTo(cx - 10, cy - 8); ctx.lineTo(cx + 2, cy - 18); ctx.lineTo(cx + 2, cy + 18); ctx.lineTo(cx - 10, cy + 8); ctx.lineTo(cx - 20, cy + 8); ctx.closePath(); ctx.fill();
+    if (muted) { line(cx + 10, cy - 10, cx + 24, cy + 10, C.ink, 4); line(cx + 24, cy - 10, cx + 10, cy + 10, C.ink, 4); }
+    else { ctx.beginPath(); ctx.arc(cx + 4, cy, 12, -0.8, 0.8); ctx.stroke(); ctx.beginPath(); ctx.arc(cx + 4, cy, 22, -0.8, 0.8); ctx.stroke(); }
+  }
+}
+
+// ---- Pointer handling (runs on the step) -----------------------------------------------------
+function trayPieceAt(pt) {
+  const tl = state.tray;
+  for (const p of state.pieces) { if (p.placed || (state.drag && state.drag.p === p)) continue; const sl = tl.slots[p.slot]; if (pt.x >= sl.x && pt.x <= sl.x + sl.s && pt.y >= sl.y && pt.y <= sl.y + sl.s) return p; }
+  return null;
+}
+function gridCellAt(pt) {
+  const L = state.lay; const c = Math.floor((pt.x - L.gx) / L.cs), r = Math.floor((pt.y - L.gy) / L.cs);
+  return (r >= 0 && c >= 0 && r < L.rows && c < L.cols) ? { r, c } : null;
+}
+function dropTarget(d) {
+  const L = state.lay;
+  return { r: Math.round((d.y - d.gy * L.cs - L.gy) / L.cs), c: Math.round((d.x - d.gx * L.cs - L.gx) / L.cs) };
+}
+function handlePointer(ev) {
+  if (scene === 'title') { if (ev.k === 'down') beginPlay(); return; }
+  if (scene === 'results') { if (ev.k === 'down' && inBtn(BTN.again, ev)) { reset(); scene = 'play'; } return; }
+  if (scene !== 'play') return;
+  if (ev.k === 'down') {
+    if (inBtn(BTN.mute, ev)) { setMuted(!muted); return; }
+    if (state.clearedAt !== null) { if (state.levelT - state.clearedAt >= tune.clear_delay && inBtn(BTN.next, ev)) nextRoom(); return; }
+    if (inBtn(BTN.reset, ev)) { resetRoom(); return; }
+    if (inBtn(BTN.hint, ev)) { useHint(); return; }
+    state.kb = false;
+    const tp = trayPieceAt(ev);
+    if (tp) {
+      const pos = trayPos(tp, state.tray), tc = state.tray.tc;
+      state.drag = { p: tp, fromTray: true, sx: ev.x, sy: ev.y, x: ev.x, y: ev.y, gx: (ev.x - pos.x) / tc, gy: (ev.y - pos.y) / tc, moved: false };
+      const b = bbox(cellsOf(tp)); state.drag.gx = Math.max(0, Math.min(b.w - 0.01, state.drag.gx)); state.drag.gy = Math.max(0, Math.min(b.h - 0.01, state.drag.gy));
+      sfx.pick(); return;
+    }
+    const g = gridCellAt(ev);
+    if (g) {
+      const p = occupancy().get(g.r + ',' + g.c);
+      if (p) {
+        const L = state.lay;
+        state.drag = { p, fromTray: false, sx: ev.x, sy: ev.y, x: ev.x, y: ev.y, gx: (ev.x - (L.gx + p.placed.c * L.cs)) / L.cs, gy: (ev.y - (L.gy + p.placed.r * L.cs)) / L.cs, moved: false, was: p.placed };
+        p.placed = null; sfx.pick();
+      }
+    }
+  } else if (ev.k === 'move' && state.drag) {
+    const d = state.drag; d.x = ev.x; d.y = ev.y;
+    if (Math.hypot(d.x - d.sx, d.y - d.sy) > tune.tap_slop) d.moved = true;
+  } else if (ev.k === 'up' && state.drag) {
+    const d = state.drag; state.drag = null;
+    if (!d.moved) {
+      if (d.fromTray) { if (canRotate()) { d.p.rot = (d.p.rot + 1) % 4; sfx.rotate(); } }
+      else { d.p.placed = d.was; }
+      return;
+    }
+    const t = dropTarget(d);
+    if (canPlace(d.p, t.r, t.c)) placePiece(d.p, t.r, t.c); else sfx.back();
+  }
+}
+
+// ---- Keyboard play ------------------------------------------------------------------------
+function keyboardPlay() {
+  if (pressed('KeyH')) useHint();
+  if (pressed('Backspace')) resetRoom();
+  const list = unplaced(); if (!list.length) return;
+  if (state.sel >= list.length) state.sel = 0;
+  const L = state.lay;
+  if (pressed('KeyE') || pressed('Tab')) { state.sel = (state.sel + 1) % list.length; state.kb = true; }
+  if (pressed('KeyQ')) { state.sel = (state.sel - 1 + list.length) % list.length; state.kb = true; }
+  const p = list[state.sel];
+  if (pressed('KeyR') && canRotate()) { p.rot = (p.rot + 1) % 4; state.kb = true; sfx.rotate(); }
+  const mv = [['ArrowLeft', 0, -1], ['ArrowRight', 0, 1], ['ArrowUp', -1, 0], ['ArrowDown', 1, 0]];
+  for (const [k, dr, dc] of mv) if (pressed(k)) { state.kb = true; state.cur.r = Math.max(0, Math.min(L.rows - 1, state.cur.r + dr)); state.cur.c = Math.max(0, Math.min(L.cols - 1, state.cur.c + dc)); }
+  if (state.kb && (pressed('Space') || pressed('Enter'))) {
+    if (canPlace(p, state.cur.r, state.cur.c)) placePiece(p, state.cur.r, state.cur.c); else sfx.back();
+  }
+}
+
+// ---- Room drawing ----------------------------------------------------------------------------
+function drawFloor(R, L) {
+  const w = R.cols * L.cs, h = R.rows * L.cs, x = L.gx, y = L.gy;
+  if (R.floor === 'wood') {
+    ctx.fillStyle = '#f1dfc4'; ctx.fillRect(x, y, w, h);
+    const pw = L.cs / 2;
+    for (let k = 0; k * pw < h; k++) {
+      line(x, y + k * pw, x + w, y + k * pw, '#e2c9a6', 1.5);
+      const off = (k % 3) * L.cs * 0.7;
+      for (let j = off; j < w; j += L.cs * 2.1) line(x + j, y + k * pw, x + j, y + (k + 1) * pw, '#e2c9a6', 1.5);
+    }
+  } else if (R.floor === 'tile') {
+    for (let r = 0; r < R.rows * 2; r++) for (let c = 0; c < R.cols * 2; c++) { ctx.fillStyle = (r + c) % 2 ? '#f6f1e9' : '#ebe4f0'; ctx.fillRect(x + c * L.cs / 2, y + r * L.cs / 2, L.cs / 2, L.cs / 2); }
+  } else {
+    ctx.fillStyle = '#eab894'; ctx.fillRect(x, y, w, h);
+    for (let r = 0; r <= R.rows; r++) line(x, y + r * L.cs, x + w, y + r * L.cs, '#d89c76', 2);
+    for (let c = 0; c <= R.cols; c++) line(x + c * L.cs, y, x + c * L.cs, y + h, '#d89c76', 2);
+  }
+  for (let r = 0; r <= R.rows; r++) line(x, y + r * L.cs, x + w, y + r * L.cs, 'rgba(110,80,70,0.12)', 1.5);
+  for (let c = 0; c <= R.cols; c++) line(x + c * L.cs, y, x + c * L.cs, y + h, 'rgba(110,80,70,0.12)', 1.5);
+}
+function drawRoom(R, L, placed, lit, t, withCat) {
+  const wt = L.cs * 0.32, w = R.cols * L.cs, h = R.rows * L.cs;
+  fillRR(L.gx - wt + 6, L.gy - wt + 10, w + 2 * wt, h + 2 * wt, wt, C.shadow);
+  fillRR(L.gx - wt, L.gy - wt, w + 2 * wt, h + 2 * wt, wt * 0.8, R.wall);
+  strokeRR(L.gx - wt, L.gy - wt, w + 2 * wt, h + 2 * wt, wt * 0.8, shade(R.wall, -0.4), 3);
+  drawFloor(R, L);
+  strokeRR(L.gx, L.gy, w, h, 2, shade(R.wall, -0.35), 2.5);
+  // window on the top wall, door on the bottom wall
+  const ww = Math.min(w * 0.4, L.cs * 1.6), wx = L.gx + w / 2 - ww / 2;
+  fillRR(wx, L.gy - wt * 0.85, ww, wt * 0.7, 4, lit > 0 ? `rgb(${190 + 50 * lit},${225 - 10 * lit},${240 - 60 * lit})` : '#cfe6f3');
+  strokeRR(wx, L.gy - wt * 0.85, ww, wt * 0.7, 4, '#fffaf3', 3); line(wx + ww / 2, L.gy - wt * 0.85, wx + ww / 2, L.gy - wt * 0.15, '#fffaf3', 3);
+  const dw = L.cs * 0.9, dx = L.gx + L.cs * 0.2;
+  ctx.fillStyle = '#f1dfc4'; ctx.fillRect(dx, L.gy + h, dw, wt);
+  line(dx, L.gy + h + wt, dx + dw, L.gy + h + wt, shade(R.wall, -0.4), 3);
+  for (const k of R.blocked) { const [r, c] = k.split(',').map(Number); drawBuiltIn(L.gx + c * L.cs, L.gy + r * L.cs, L.cs, R.wall); }
+  for (const pc of placed) drawPiece(pc.type, pc.cells.map(([r, c]) => [r, c]), L.gx, L.gy, L.cs, pc.color);
+  // light: dim before, warm after
+  ctx.save(); rr(L.gx, L.gy, w, h, 2); ctx.clip();
+  if (lit < 1) { ctx.fillStyle = `rgba(70,60,95,${0.16 * (1 - lit)})`; ctx.fillRect(L.gx, L.gy, w, h); }
+  if (lit > 0) {
+    const g = ctx.createRadialGradient(L.gx + w / 2, L.gy, 10, L.gx + w / 2, L.gy + h * 0.5, Math.max(w, h));
+    g.addColorStop(0, `rgba(255,214,140,${0.42 * lit})`); g.addColorStop(1, 'rgba(255,190,120,0)');
+    ctx.fillStyle = g; ctx.fillRect(L.gx, L.gy, w, h);
+  }
+  ctx.restore();
+  if (withCat && lit > 0.3) {
+    let best = null; for (const pc of placed) if (!best || pc.cells.length > best.cells.length) best = pc;
+    if (best) {
+      const cr = best.cells.reduce((a, [r]) => a + r, 0) / best.cells.length, cc = best.cells.reduce((a, [, c]) => a + c, 0) / best.cells.length;
+      ctx.save(); ctx.globalAlpha = Math.min(1, (lit - 0.3) / 0.4);
+      drawCat(L.gx + (cc + 0.5) * L.cs, L.gy + (cr + 0.5) * L.cs, L.cs * 0.95, t); ctx.restore();
+    }
+  }
+}
+function placedList(except) {
+  return state.pieces.filter(p => p.placed && p !== except).map(p => ({ type: p.type, color: p.color, cells: absCells(p) }));
+}
+
+// ---- Scenes ---------------------------------------------------------------------------------
+function beginPlay() { reset(); scene = 'play'; }
+const FIG_LIST = Object.keys(TYPES);
+const FIG_SHAPE = { bed: [[0,0],[0,1],[1,0],[1,1],[2,0],[2,1]], wardrobe: [[0,0],[1,0]], rug: [[0,0],[0,1],[1,1]], sofa: [[0,0],[0,1],[0,2],[1,0]],
+  shelf: [[0,0],[0,1],[0,2]], plant: [[0,0]], planter: [[0,0],[1,0],[1,1]], counter: [[0,0],[0,1],[1,0]], stove: [[0,0],[1,0]], chair: [[0,0]],
+  table: [[0,0],[0,1],[1,0],[1,1]], tv: [[0,0],[1,0],[2,0]], fridge: [[0,0],[1,0]], sink: [[0,0],[0,1],[0,2]], tub: [[0,0],[0,1],[1,0],[1,1]],
+  shower: [[0,0],[0,1],[1,0],[1,1]], toilet: [[0,0]], desk: [[0,0],[0,1],[0,2],[0,3]], bench: [[0,0],[0,1],[0,2]] };
+const scenes = {
+  figures: {
+    update(dt) { state.t += dt; },
+    draw() {
+      clear(C.bg); text('Nội thất', W / 2, 50, 40, C.ink);
+      const cs = 44, colW = W / 4, rowH = 230;
+      FIG_LIST.forEach((k, i) => {
+        const cells = FIG_SHAPE[k], b = bbox(cells), col = i % 4, row = Math.floor(i / 4);
+        const x = col * colW + (colW - b.w * cs) / 2, y = 100 + row * rowH + (170 - b.h * cs) / 2;
+        drawPiece(k, cells, x, y, cs, PAL[i % PAL.length]);
+        text(TYPES[k], col * colW + colW / 2, 100 + row * rowH + 192, 24, C.ink);
+      });
+      const i = FIG_LIST.length, col = i % 4, row = Math.floor(i / 4);
+      drawCat(col * colW + colW / 2, 100 + row * rowH + 85, 110, state.t); text('Mèo', col * colW + colW / 2, 100 + row * rowH + 192, 24, C.ink);
+    },
+  },
+  title: {
+    update(dt) { state.t += dt; if (pressed('Enter') || pressed('Space')) beginPlay(); },
+    draw() {
+      clear(C.bg);
+      for (let k = 0; k < 9; k++) ell(80 + k * 80, 150 + Math.sin(k) * 30, 40, 40, 0, 'rgba(242,185,176,0.18)');
+      text('Furnish It', W / 2, 200, 96, C.ink, 'center', '800');
+      text('Xếp đồ cho căn nhà nhỏ', W / 2, 280, 36, C.inkSoft);
+      // a little lit room on the title
+      const R = { wall: C.blush, floor: 'wood', rows: 3, cols: 4, blocked: new Set() };
+      const L = roomLayout(3, 4, { x: 140, y: 340, w: 440, h: 340 });
+      drawRoom(R, L, [
+        { type: 'sofa', color: C.sage, cells: [[0, 0], [0, 1], [0, 2], [1, 0]] }, { type: 'plant', color: C.sage, cells: [[0, 3]] },
+        { type: 'table', color: C.butter, cells: [[1, 1], [1, 2], [2, 1], [2, 2]] }, { type: 'shelf', color: C.lav, cells: [[1, 3], [2, 3]] },
+        { type: 'rug', color: C.blush, cells: [[2, 0]] },
+      ], 0.6 + Math.sin(state.t * 1.5) * 0.15, state.t, true);
+      CONTROLS.forEach((c, i) => text(c, W / 2, 740 + i * 46, 26, C.inkSoft, 'center', '600'));
+      drawButton(BTN.start, 'Bắt đầu', C.butter, 42);
+      text('Chạm hoặc Enter', W / 2, 1150, 24, C.inkSoft, 'center', '600');
+    },
+  },
+  play: {
+    update(dt) {
+      state.t += dt; state.levelT += dt;
+      while (ptrQ.length) handlePointer(ptrQ.shift());
+      if (state.clearedAt !== null) {
+        if (state.levelT - state.clearedAt >= tune.clear_delay && (pressed('Enter') || pressed('Space'))) nextRoom();
+      } else keyboardPlay();
+      for (const m of state.motes) { m.y -= m.v * dt; m.ph += dt; if (m.y < state.lay.gy) m.y += state.room.rows * state.lay.cs; }
+    },
+    draw() {
+      clear(C.bg);
+      const R = state.room, L = state.lay, cleared = state.clearedAt !== null;
+      const lit = cleared ? Math.min(1, (state.levelT - state.clearedAt) / tune.glow_time) : 0;
+      // HUD
+      drawIconBtn(BTN.reset, 'reset'); drawIconBtn(BTN.hint, 'hint'); drawIconBtn(BTN.mute, 'mute');
+      text(`Phòng ${state.level + 1}/${LEVELS.length}`, W / 2 - 40, 50, 28, C.inkSoft, 'center', '700');
+      text(R.name, W / 2 - 40, 92, 40, C.ink, 'center', '800');
+      const f = filledCount(), bw = 300, bx = W / 2 - 40 - bw / 2;
+      fillRR(bx, 124, bw, 18, 9, '#e8d9c9'); fillRR(bx, 124, Math.max(18, bw * f / R.free), 18, 9, C.sage); strokeRR(bx, 124, bw, 18, 9, C.line, 2);
+      text(`${f}/${R.free} ô`, bx + bw + 14, 133, 22, C.inkSoft, 'left', '700');
+      drawRoom(R, L, placedList(state.drag && state.drag.p), lit, state.t, cleared);
+      // preview of a drop
+      const d = state.drag;
+      const showGhost = (p, r0, c0) => {
+        const ok = canPlace(p, r0, c0);
+        for (const [r, c] of cellsOf(p)) { const rr2 = r + r0, cc = c + c0; if (rr2 < 0 || cc < 0 || rr2 >= R.rows || cc >= R.cols) continue; ctx.fillStyle = ok ? C.ok : C.bad; ctx.fillRect(L.gx + cc * L.cs + 3, L.gy + rr2 * L.cs + 3, L.cs - 6, L.cs - 6); }
+        return ok;
+      };
+      if (d && d.moved) showGhost(d.p, dropTarget(d).r, dropTarget(d).c);
+      if (!cleared && state.kb && !d) { const list = unplaced(); const p = list[state.sel % Math.max(1, list.length)]; if (p) { showGhost(p, state.cur.r, state.cur.c); drawPiece(p.type, cellsOf(p), L.gx + state.cur.c * L.cs, L.gy + state.cur.r * L.cs, L.cs, p.color, 0.55, false); } }
+      // motes
+      if (lit > 0) for (const m of state.motes) { ctx.globalAlpha = lit * (0.5 + 0.5 * Math.sin(m.ph * 2)); ell(m.x + Math.sin(m.ph) * 6, m.y, m.s, m.s, 0, '#fff6d8'); } ctx.globalAlpha = 1;
+      const tl = state.tray, list = unplaced();
+      // tray (hidden once the room is done)
+      if (!cleared) {
+      fillRR(TRAY_BOX.x, TRAY_BOX.y + 6, TRAY_BOX.w, TRAY_BOX.h, 34, '#e6d3c1');
+      fillRR(TRAY_BOX.x, TRAY_BOX.y, TRAY_BOX.w, TRAY_BOX.h, 34, '#fbf3ea'); strokeRR(TRAY_BOX.x, TRAY_BOX.y, TRAY_BOX.w, TRAY_BOX.h, 34, C.line, 3);
+      for (const p of state.pieces) {
+        if (p.placed || (d && d.p === p)) continue;
+        const sl = tl.slots[p.slot], pos = trayPos(p, tl);
+        const sel = state.kb && list[state.sel] === p;
+        fillRR(sl.x + 6, sl.y + 6, sl.s - 12, sl.s - 12, 18, sel ? '#f9e3b4' : '#f3e7da');
+        if (sel) strokeRR(sl.x + 6, sl.y + 6, sl.s - 12, sl.s - 12, 18, C.butter, 4);
+        drawPiece(p.type, cellsOf(p), pos.x, pos.y, tl.tc, p.color);
+      }
+      }
+      // tips
+      let tip = '';
+      if (state.level === 0 && !state.touched) tip = 'Kéo món đồ vào chỗ trống trong phòng';
+      else if (canRotate() && state.level + 1 === tune.rotate_from && state.moves < 3 + filledCount() * 0) tip = 'Chạm món đồ trong khay để xoay';
+      if (tip && !cleared) text(tip, W / 2, TRAY_BOX.y + 34, 26, C.ink, 'center', '700');
+      // dragged piece on top
+      if (d) {
+        const cs = d.moved ? L.cs : (d.fromTray ? tl.tc : L.cs);
+        drawPiece(d.p.type, cellsOf(d.p), d.x - d.gx * cs, d.y - d.gy * cs, cs, d.p.color, 0.95, true);
+      }
+      // tutorial hand: from the bed in the tray to its place
+      if (state.level === 0 && !state.touched && !d) {
+        const p = state.pieces[0]; const pos = trayPos(p, tl); const b = bbox(cellsOf(p));
+        const k = (state.levelT % tune.hand_loop) / tune.hand_loop, e = k < 0.15 ? 0 : k > 0.75 ? 1 : (k - 0.15) / 0.6, ease = e * e * (3 - 2 * e);
+        const x0 = pos.x + b.w * tl.tc / 2, y0 = pos.y + b.h * tl.tc / 2, x1 = L.gx + (p.sol.c + b.w / 2) * L.cs, y1 = L.gy + (p.sol.r + b.h / 2) * L.cs;
+        const hx = x0 + (x1 - x0) * ease, hy = y0 + (y1 - y0) * ease;
+        if (k > 0.1 && k < 0.85) { const cs2 = tl.tc + (L.cs - tl.tc) * ease; drawPiece(p.type, cellsOf(p), hx - b.w * cs2 / 2, hy - b.h * cs2 / 2, cs2, p.color, 0.45, false); }
+        drawHand(hx + 10, hy + 6, 90);
+      }
+      // room cleared
+      if (cleared) {
+        const a = Math.min(1, (state.levelT - state.clearedAt) / 0.5);
+        ctx.globalAlpha = a;
+        fillRR(60, 820, 600, 400, 40, 'rgba(255,248,236,0.97)'); strokeRR(60, 820, 600, 400, 40, C.line, 3);
+        text('Phòng đã ấm cúng!', W / 2, 880, 44, C.ink, 'center', '800');
+        for (let k = 0; k < 3; k++) { const pop = Math.min(1, Math.max(0, (state.levelT - state.clearedAt - 0.3 - k * 0.2) / 0.25)); if (pop > 0) drawStar(W / 2 + (k - 1) * 110, 980 - (k === 1 ? 14 : 0), 44 * pop, C.butter); }
+        text(state.roomHints ? `Đã dùng ${state.roomHints} gợi ý` : 'Không cần gợi ý', W / 2, 1060, 26, C.inkSoft, 'center', '600');
+        if (state.levelT - state.clearedAt >= tune.clear_delay) drawButton(BTN.next, state.level + 1 >= LEVELS.length ? 'Xem cả nhà' : 'Phòng tiếp', C.sage, 38);
+        ctx.globalAlpha = 1;
+      }
+    },
+  },
+  results: {
+    update(dt) { state.t += dt; while (ptrQ.length) handlePointer(ptrQ.shift()); if (pressed('Enter')) { reset(); scene = 'play'; } },
+    draw() {
+      clear(C.bg);
+      text(state.gained || 'Căn nhà đã hoàn thành!', W / 2, 80, 46, C.ink, 'center', '800');
+      text(`6 phòng · ${state.hints} gợi ý · ${state.moves} lần đặt`, W / 2, 135, 26, C.inkSoft, 'center', '600');
+      LEVELS.forEach((Lv, i) => {
+        const col = i % 2, row = Math.floor(i / 2), bx = 30 + col * 335, by = 170 + row * 320;
+        const rows = Lv.map.length, cols = Lv.map[0].length, blocked = new Set();
+        Lv.map.forEach((s, r) => [...s].forEach((ch, c) => { if (ch === '#') blocked.add(r + ',' + c); }));
+        const L = roomLayout(rows, cols, { x: bx, y: by, w: 325, h: 270 });
+        drawRoom({ wall: Lv.wall, floor: Lv.floor, rows, cols, blocked }, L, state.done[i] || [], 1, state.t + i, true);
+        text(Lv.name, bx + 162, by + 292, 24, C.ink, 'center', '700');
+      });
+      drawButton(BTN.again, 'Chơi lại', C.butter, 38);
+    },
+  },
+};
+
+// ---- Loop: fixed step, frame time clamped ---------------------------------------------
+function step() {
+  if (pressed('KeyM')) { setMuted(!muted); hit.delete('KeyM'); }
+  if (scene !== 'play' && scene !== 'results') ptrQ.forEach(ev => { if (scene === 'title' && ev.k === 'down') beginPlay(); }), ptrQ.length = 0;
+  scenes[scene].update(STEP); hit.clear();
+}
+let last, acc = 0, ALPHA = 1;
+function tick() {
+  const now = clock.now();
+  acc += Math.min(now - last, 0.25); last = now;
+  while (acc >= STEP) { step(); acc -= STEP; }
+  ALPHA = acc / STEP;
+  drawFrame();
+}
+function drawFrame() { scenes[scene].draw(); }
+function frame() { tick(); requestAnimationFrame(frame); }
+function timer() { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
+
+// ---- What a check can read and drive (?manual=1 stops the loop; players never see it) ----
+window.game = {
+  get scene() { return scene; },
+  get state() { return state; },
+  press(code) { hit.add(code); },
+  hold(code, on) { on ? down.add(code) : down.delete(code); },
+  get events() { return events; },
+  step(n = 1, draw = true, alpha = 1) {
+    for (let i = 0; i < n; i++) step();
+    if (draw) { ALPHA = alpha; drawFrame(); }
+  },
+};
+
+reset();
+scene = params.get('scene') || 'title';
+last = clock.now();
+if (params.get('manual') === '1') drawFrame();
+else { requestAnimationFrame(frame); setInterval(timer, 50); }
+</script>
+</body>
+</html>

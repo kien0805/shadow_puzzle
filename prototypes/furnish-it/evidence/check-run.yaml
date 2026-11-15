@@ -1,0 +1,121 @@
+# The one-shot's small check (check-run/1).
+# Written by one-shot-check.sh --record: the results are /prototype's reading of
+# evidence/self-check.tsv; never edited by hand.
+kind: check-run/1
+engine: web
+browser: "HeadlessChrome/157.0.0.0"
+time: "2026-11-15 09:23:33"
+checks:
+  - id: boots
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: shot
+    result: pass
+    evidence:
+      - "evidence/play.png"
+  - id: outlines
+    result: pass
+    evidence:
+      - "evidence/figures.png"
+  - id: brief-words
+    result: pass
+    evidence:
+      - "evidence/brief-words.tsv"
+  - id: emoji
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: nearest-game
+    result: pass
+    evidence:
+      - "evidence/nearest-game.txt"
+brief_checklist:
+  - id: L1
+    result: pass
+    evidence: "evidence/clear2.png"
+    item: "Look: phong cách cozy pastel flat-lay. Nhìn từ trên xuống. Sàn gỗ màu kem nhạt, tường hồng đất và xanh mint. Nội thất vẽ bằng shape có bo góc, có chi tiết: gối trên giường, gân trên lá cây, gáy sách trên kệ. Bóng đổ mềm. Chi tiết đặc trưng: giải xong thì đèn bật vàng ấm, có con mèo nằm cuộn tròn và vài hạt bụi nắng bay. Mọi hình đều được vẽ, không dùng emoji, không dùng hình tròn trơn."
+  - id: L2
+    result: pass
+    evidence: "evidence/play.png"
+    item: "References: A Little to the Left (lấy palette pastel và cảm giác xếp đồ thư giãn), Room Sort (lấy kiểu khối điền vào lưới mặt bằng)."
+  - id: L3
+    result: pass
+    evidence: "evidence/clear1.png"
+    item: "View: 2D · Camera: top-down cố định, màn dọc như điện thoại."
+  - id: F1
+    result: pass
+    evidence: "evidence/results.png"
+    item: "6 phòng (phòng ngủ, phòng khách, bếp, phòng tắm, phòng làm việc, ban công), mỗi phòng một bộ nội thất riêng"
+  - id: F2
+    result: pass
+    evidence: "index.html:723"
+    item: "Kéo thả có xem trước ô xanh/đỏ, khối hít vào lưới"
+  - id: F3
+    result: pass
+    evidence: "index.html:640"
+    item: "Xoay khối (từ phòng 3)"
+  - id: F4
+    result: pass
+    evidence: "evidence/room6.png"
+    item: "Ô chặn cố định (từ phòng 4)"
+  - id: F5
+    result: pass
+    evidence: "evidence/clear1.png"
+    item: "Màn \"lên đèn\" khi giải xong: đèn ấm, mèo, bụi nắng"
+  - id: F6
+    result: pass
+    evidence: "evidence/clear1.png"
+    item: "Nút làm lại và nút gợi ý (đặt hộ 1 món đúng chỗ)"
+  - id: F7
+    result: pass
+    evidence: "evidence/results.png"
+    item: "Màn kết: toàn cảnh căn nhà"
+  - id: M1
+    result: pass
+    evidence: "evidence/play.png"
+    item: "Phòng 1 có lưới 4×4, vài ô trống, khay chỉ có 3 món."
+  - id: M2
+    result: pass
+    evidence: "evidence/play.png"
+    item: "Một bàn tay gợi ý kéo chiếc giường vào."
+  - id: M3
+    result: not_run
+    mark: not assessed
+    why: "snap and sound are in code; a sound cannot be checked from a shot"
+    evidence: "index.html:600"
+    item: "Khi khối vừa chỗ, nó \"bụp\" vào lưới kèm tiếng nhẹ."
+  - id: M4
+    result: pass
+    evidence: "index.html:723"
+    item: "Khi kéo qua lưới, ô xanh là đặt được, ô đỏ là trùng."
+  - id: M5
+    result: pass
+    evidence: "evidence/clear1.png"
+    item: "Người chơi đặt nốt 2 món, phòng kín ô thì đèn bật ấm, mèo xuất hiện, hiện 3 ngôi sao trang trí."
+  - id: M6
+    result: pass
+    evidence: "evidence/clear1.png"
+    item: "Bấm \"Phòng tiếp\" để sang màn sau."
+  - id: C1
+    result: pass
+    evidence: "config.js:23"
+    item: "Màn 1–2 là dạy chơi."
+  - id: C2
+    result: pass
+    evidence: "config.js:11"
+    item: "Từ màn 3 bắt đầu được xoay khối."
+  - id: C3
+    result: pass
+    evidence: "evidence/room6.png"
+    item: "Màn 4–6 có các ô bị chặn (cột, lò sưởi cố định), lưới to hơn và nhiều món hơn, phải thử vài cách mới ra."
+  - id: C4
+    result: pass
+    evidence: "index.html:688"
+    item: "Không có thua: đặt sai thì kéo khối trả về khay, hoặc bấm làm lại."
+measures:
+  - id: step-time
+    value: 0.200
+    unit: ms
+    by: browser
+    detail: "mean 0.009 ms, slowest 0.200 ms, 126 steps"

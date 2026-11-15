@@ -1,0 +1,703 @@
+<!doctype html>
+<!-- PROTOTYPE - NOT FOR PRODUCTION -->
+<!-- Question: Kéo khối có hình vào bóng đen với đồng hồ đếm ngược có đủ vui để làm hết 6 vật không? -->
+<!-- Date: 2026-11-16 -->
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Shadow Museum</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #2a2330; overflow: hidden; touch-action: none; }
+  body { font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }
+  canvas { display: block; margin: 0 auto; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="config.js"></script>
+<script>
+'use strict';
+// Shadow Museum: drag picture blocks into each black shadow before the clock runs out.
+
+// ---- Built to be checked ----------------------------------------------------------------
+const params = new URLSearchParams(location.search);
+const tune = new Proxy({}, { get: (_, k) => CONFIG[k].value });
+const STEP = 1 / 60;
+const W = 720, H = 1280;
+const PIXEL = false;
+const FONT = '"Segoe UI", system-ui, sans-serif';
+const TITLE = 'Shadow Museum';
+const CONTROLS = [
+  'Chạm một bóng đen để mở',
+  'Kéo khối có hình vào đúng chỗ trong bóng',
+  'Lấp kín trước khi hết giờ',
+  'Phím: mũi tên chọn · Enter mở · Q/E chọn khối',
+  'Space đặt · H gợi ý (trừ giờ) · M tắt tiếng',
+];
+const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 };
+const CHEAP = params.get('render') === 'cheap';
+let seed;
+function rng() {
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const events = [];
+
+// ---- Screen ---------------------------------------------------------------------------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+function fit() {
+  const k = Math.min(innerWidth / W, innerHeight / H), r = k * (devicePixelRatio || 1);
+  canvas.width = Math.round(W * r); canvas.height = Math.round(H * r);
+  canvas.style.width = Math.round(W * k) + 'px'; canvas.style.height = Math.round(H * k) + 'px';
+  canvas.style.marginTop = Math.max(0, Math.floor((innerHeight - H * k) / 2)) + 'px';
+  ctx.setTransform(r, 0, 0, r, 0, 0); ctx.imageSmoothingEnabled = true;
+}
+addEventListener('resize', fit); fit();
+function clear(c) { ctx.fillStyle = c; ctx.fillRect(0, 0, W, H); }
+function text(s, x, y, size, c, align = 'center', weight = '700') {
+  ctx.fillStyle = c; ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align;
+  ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+const C = { ink: '#3d2f2b', inkSoft: '#7a655c', cream: '#f7efe2', wall: '#efe3cf', line: '#4a3a33', gold: '#e2b54a', red: '#e0574f', sage: '#9cc7a0' };
+
+// ---- Input ---------------------------------------------------------------------------------
+const down = new Set(), hit = new Set();
+const pressed = code => hit.has(code);
+addEventListener('keydown', e => {
+  startAudio();
+  if (!e.repeat) { down.add(e.code); hit.add(e.code); }
+  if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Tab') e.preventDefault();
+});
+addEventListener('keyup', e => down.delete(e.code));
+addEventListener('blur', () => down.clear());
+const ptrQ = [];
+function toLogical(e) { const b = canvas.getBoundingClientRect(); return { x: (e.clientX - b.left) * W / b.width, y: (e.clientY - b.top) * H / b.height }; }
+canvas.addEventListener('pointerdown', e => { startAudio(); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} ptrQ.push({ k: 'down', ...toLogical(e) }); e.preventDefault(); });
+canvas.addEventListener('pointermove', e => ptrQ.push({ k: 'move', ...toLogical(e) }));
+canvas.addEventListener('pointerup', e => ptrQ.push({ k: 'up', ...toLogical(e) }));
+canvas.addEventListener('pointercancel', e => ptrQ.push({ k: 'up', ...toLogical(e) }));
+
+// ---- Audio --------------------------------------------------------------------------------
+let audio = null, muted = false;
+function startAudio() {
+  if (!audio) {
+    const ac = window.GAME_AUDIO || new (window.AudioContext || window.webkitAudioContext)();
+    const out = ac.createGain(); out.gain.value = muted ? 0 : tune.volume; out.connect(ac.destination); audio = { ac, out };
+  }
+  if (audio.ac.state === 'suspended') audio.ac.resume();
+}
+function setMuted(m) { muted = m; if (audio) audio.out.gain.value = m ? 0 : tune.volume; }
+addEventListener('tune', () => setMuted(muted));
+function tone(freq, dur, type = 'sine', vol = 0.25, delay = 0) {
+  if (!audio || muted) return;
+  const t = audio.ac.currentTime + delay, o = audio.ac.createOscillator(), g = audio.ac.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.015); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(audio.out); o.start(t); o.stop(t + dur + 0.02);
+}
+const sfx = {
+  pick: () => tone(560, 0.07, 'sine', 0.12),
+  place: () => { tone(440, 0.12, 'triangle', 0.22); tone(660, 0.18, 'sine', 0.16, 0.05); },
+  wrong: () => { tone(180, 0.15, 'square', 0.08); tone(150, 0.15, 'square', 0.06, 0.07); },
+  tick: () => tone(1200, 0.04, 'square', 0.06),
+  win: () => [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.4, 'sine', 0.18, i * 0.08)),
+  fail: () => [392, 330, 262, 196].forEach((f, i) => tone(f, 0.3, 'triangle', 0.18, i * 0.12)),
+  open: () => [392, 523, 659, 784, 659, 784, 1047].forEach((f, i) => tone(f, 0.35, 'sine', 0.15, i * 0.12)),
+};
+
+// ---- Drawing helpers ------------------------------------------------------------------------
+function rr(g, x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+function fillRR(x, y, w, h, r, c) { rr(ctx, x, y, w, h, r); ctx.fillStyle = c; ctx.fill(); }
+function strokeRR(x, y, w, h, r, c, lw) { rr(ctx, x, y, w, h, r); ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.stroke(); }
+function lin(g, x0, y0, x1, y1, stops) { const gr = g.createLinearGradient(x0, y0, x1, y1); stops.forEach(([o, c]) => gr.addColorStop(o, c)); return gr; }
+function rad(g, x, y, r0, r1, stops) { const gr = g.createRadialGradient(x, y, r0, x, y, r1); stops.forEach(([o, c]) => gr.addColorStop(o, c)); return gr; }
+function ellipse(g, x, y, rx, ry, rot, fill) { g.beginPath(); g.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2); g.fillStyle = fill; g.fill(); }
+function stroke(g, c, w) { g.strokeStyle = c; g.lineWidth = w; g.lineCap = 'round'; g.lineJoin = 'round'; g.stroke(); }
+function drawStar(x, y, r, c) {
+  ctx.beginPath(); for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, q = k % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * q, y + Math.sin(a) * q); }
+  ctx.closePath(); ctx.fillStyle = c; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+}
+function sparkle(x, y, r, a) {
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = '#fff6d0';
+  ctx.beginPath(); ctx.moveTo(x, y - r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.quadraticCurveTo(x, y, x, y + r); ctx.quadraticCurveTo(x, y, x - r, y); ctx.quadraticCurveTo(x, y, x, y - r); ctx.fill(); ctx.restore();
+}
+
+// ---- The six museum pieces, drawn as smooth illustrations on a 480 square --------------------
+const ART_N = 480;
+const ART = {
+  bust(g) {
+    g.beginPath(); rr(g, 150, 405, 180, 55, 8); g.fillStyle = lin(g, 150, 0, 330, 0, [[0, '#b9b0a3'], [0.5, '#e6dfd4'], [1, '#a89f92']]); g.fill();
+    rr(g, 135, 392, 210, 20, 6); g.fillStyle = '#d8d0c3'; g.fill();
+    const marble = rad(g, 220, 230, 20, 260, [[0, '#fbf8f2'], [0.6, '#e8e1d6'], [1, '#c9bfb1']]);
+    g.beginPath(); g.moveTo(100, 395); g.bezierCurveTo(92, 325, 150, 298, 202, 286); g.lineTo(278, 286); g.bezierCurveTo(330, 298, 388, 325, 380, 395); g.closePath(); g.fillStyle = marble; g.fill();
+    g.beginPath(); g.moveTo(130, 330); g.bezierCurveTo(190, 360, 250, 340, 300, 380); stroke(g, '#cbbfae', 6);
+    g.beginPath(); g.moveTo(160, 300); g.bezierCurveTo(200, 330, 240, 320, 270, 350); stroke(g, '#d6cbbb', 5);
+    g.beginPath(); g.moveTo(208, 205); g.lineTo(272, 205); g.lineTo(282, 300); g.lineTo(198, 300); g.closePath(); g.fillStyle = marble; g.fill();
+    ellipse(g, 168, 172, 13, 24, 0, '#ddd5c8'); ellipse(g, 312, 172, 13, 24, 0, '#ddd5c8');
+    ellipse(g, 240, 165, 72, 90, 0, marble);
+    for (let k = 0; k <= 9; k++) { const a = Math.PI * (1.02 + k * 0.105); ellipse(g, 240 + Math.cos(a) * 70, 160 + Math.sin(a) * 82, 24, 22, a, k % 2 ? '#d9d0c2' : '#e6dfd3'); }
+    ellipse(g, 240, 80, 40, 22, 0, '#e3dbcf');
+    g.beginPath(); g.moveTo(236, 140); g.lineTo(246, 192); g.quadraticCurveTo(240, 200, 230, 196); stroke(g, '#bdb2a2', 4);
+    g.beginPath(); g.arc(214, 148, 12, 0.2, Math.PI - 0.2); stroke(g, '#a99d8c', 3.5);
+    g.beginPath(); g.arc(266, 148, 12, 0.2, Math.PI - 0.2); stroke(g, '#a99d8c', 3.5);
+    g.beginPath(); g.moveTo(198, 130); g.quadraticCurveTo(214, 122, 228, 130); stroke(g, '#bdb2a2', 4);
+    g.beginPath(); g.moveTo(252, 130); g.quadraticCurveTo(266, 122, 282, 130); stroke(g, '#bdb2a2', 4);
+    g.beginPath(); g.moveTo(224, 220); g.quadraticCurveTo(240, 230, 256, 220); stroke(g, '#b8a998', 4);
+    for (let k = 0; k < 6; k++) { const a = Math.PI * (1.15 + k * 0.14); ellipse(g, 240 + Math.cos(a) * 80, 140 + Math.sin(a) * 75, 14, 6, a + 1.2, '#b6c48f'); }
+  },
+  amphora(g) {
+    g.beginPath(); g.moveTo(205, 418); g.lineTo(275, 418); g.lineTo(298, 455); g.lineTo(182, 455); g.closePath(); g.fillStyle = '#9b4a25'; g.fill();
+    g.beginPath(); g.moveTo(212, 100); g.bezierCurveTo(148, 92, 126, 150, 166, 205); stroke(g, '#a24f28', 18);
+    g.beginPath(); g.moveTo(268, 100); g.bezierCurveTo(332, 92, 354, 150, 314, 205); stroke(g, '#a24f28', 18);
+    const body = new Path2D(); body.moveTo(205, 148); body.bezierCurveTo(118, 172, 92, 282, 150, 360); body.bezierCurveTo(175, 398, 198, 414, 214, 420);
+    body.lineTo(266, 420); body.bezierCurveTo(282, 414, 305, 398, 330, 360); body.bezierCurveTo(388, 282, 362, 172, 275, 148); body.closePath();
+    g.fillStyle = lin(g, 110, 0, 370, 0, [[0, '#a5502a'], [0.45, '#e0884f'], [0.7, '#d37443'], [1, '#93441f']]); g.fill(body);
+    g.fillStyle = lin(g, 205, 0, 275, 0, [[0, '#a5502a'], [0.5, '#df864d'], [1, '#9b4a25']]); g.fillRect(205, 82, 70, 72);
+    ellipse(g, 240, 84, 54, 15, 0, '#c4683a'); ellipse(g, 240, 84, 40, 9, 0, '#3a2018');
+    g.save(); g.clip(body);
+    g.fillStyle = '#2b2220'; g.fillRect(0, 248, 480, 78);
+    g.beginPath(); for (let x = 110; x < 380; x += 22) { g.moveTo(x, 256); g.lineTo(x + 11, 256); g.lineTo(x + 11, 266); g.lineTo(x + 4, 266); }
+    stroke(g, '#e0884f', 3);
+    for (const [fx, d] of [[200, 1], [280, -1]]) { // two running figures in silhouette, black-figure style
+      ellipse(g, fx, 284, 7, 8, 0, '#e0884f'); g.beginPath(); g.moveTo(fx, 292); g.lineTo(fx - 4 * d, 306); stroke(g, '#e0884f', 6);
+      g.beginPath(); g.moveTo(fx - 4 * d, 306); g.lineTo(fx - 14 * d, 320); g.moveTo(fx - 4 * d, 306); g.lineTo(fx + 8 * d, 318); stroke(g, '#e0884f', 4);
+      g.beginPath(); g.moveTo(fx, 296); g.lineTo(fx + 14 * d, 290); g.moveTo(fx, 296); g.lineTo(fx - 12 * d, 300); stroke(g, '#e0884f', 3.5);
+    }
+    g.fillStyle = '#2b2220'; g.fillRect(0, 344, 480, 8); g.fillRect(0, 232, 480, 6);
+    g.fillStyle = 'rgba(255,240,220,0.25)'; g.beginPath(); g.ellipse(195, 210, 22, 70, 0.25, 0, Math.PI * 2); g.fill();
+    g.restore();
+  },
+  helmet(g) {
+    for (let k = 0; k < 5; k++) { g.beginPath(); g.moveTo(240, 92); g.bezierCurveTo(300 + k * 8, 30 - k * 4, 380 + k * 6, 60 + k * 10, 400 - k * 6, 150 + k * 18); stroke(g, ['#d9534f', '#e7746c', '#c64440', '#f08c80', '#b83a37'][k], 22 - k * 2); }
+    g.beginPath(); g.moveTo(152, 385); g.lineTo(118, 446); g.lineTo(362, 446); g.lineTo(328, 385); g.closePath(); g.fillStyle = lin(g, 118, 0, 362, 0, [[0, '#6f7c87'], [0.5, '#c9d1d8'], [1, '#64707b']]); g.fill();
+    g.beginPath(); g.moveTo(140, 330); g.bezierCurveTo(128, 140, 352, 140, 340, 330); g.lineTo(330, 395); g.quadraticCurveTo(240, 425, 150, 395); g.closePath();
+    g.fillStyle = lin(g, 130, 0, 350, 0, [[0, '#6b7782'], [0.35, '#dfe5ea'], [0.55, '#b6c0c8'], [1, '#5d6973']]); g.fill();
+    g.beginPath(); g.moveTo(240, 108); g.lineTo(240, 400); stroke(g, '#eef2f5', 6);
+    g.beginPath(); g.moveTo(150, 250); g.lineTo(330, 250); g.lineTo(326, 372); g.quadraticCurveTo(240, 405, 154, 372); g.closePath(); g.fillStyle = 'rgba(70,80,90,0.25)'; g.fill();
+    for (const y of [266, 292]) { rr(g, 166, y, 148, 12, 6); g.fillStyle = '#20262c'; g.fill(); }
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) ellipse(g, 268 + c * 14, 322 + r * 14, 3.5, 3.5, 0, '#20262c');
+    for (let k = 0; k < 9; k++) { const a = Math.PI * (0.05 + k * 0.1125); ellipse(g, 240 - Math.cos(a) * 112, 395 - Math.sin(a) * 4 + (k % 2) * 0, 5, 5, 0, '#e8edf1'); }
+    g.beginPath(); g.moveTo(152, 245); g.quadraticCurveTo(240, 232, 328, 245); stroke(g, '#4b5660', 4);
+  },
+  skull(g) {
+    g.beginPath(); g.moveTo(300, 372); g.lineTo(300, 438); stroke(g, '#5b4c44', 10);
+    ellipse(g, 300, 446, 74, 13, 0, '#4a3d36');
+    const bone = lin(g, 0, 120, 0, 380, [[0, '#f6ecd6'], [0.6, '#e6d6b4'], [1, '#c8b38c']]);
+    g.beginPath(); g.moveTo(112, 300); g.lineTo(342, 312); g.bezierCurveTo(362, 340, 332, 372, 290, 374); g.lineTo(160, 352); g.bezierCurveTo(130, 342, 110, 326, 112, 300); g.closePath(); g.fillStyle = '#d9c7a3'; g.fill();
+    g.beginPath(); g.moveTo(66, 252); g.bezierCurveTo(88, 200, 170, 160, 262, 128); g.bezierCurveTo(342, 102, 414, 128, 424, 200); g.bezierCurveTo(432, 262, 402, 302, 350, 312); g.lineTo(150, 302); g.bezierCurveTo(108, 296, 76, 284, 66, 252); g.closePath(); g.fillStyle = bone; g.fill();
+    for (let x = 96; x < 320; x += 19) { g.beginPath(); g.moveTo(x, 300); g.lineTo(x + 8, 324); g.lineTo(x + 15, 301); g.closePath(); g.fillStyle = '#fffaf0'; g.fill(); }
+    for (let x = 130; x < 320; x += 21) { g.beginPath(); g.moveTo(x, 344); g.lineTo(x + 9, 318); g.lineTo(x + 17, 346); g.closePath(); g.fillStyle = '#f4ecdc'; g.fill(); }
+    ellipse(g, 322, 190, 40, 32, -0.2, '#5a4636'); ellipse(g, 316, 196, 24, 18, -0.2, '#3b2c22');
+    ellipse(g, 232, 232, 44, 22, -0.15, '#6b5442');
+    ellipse(g, 118, 236, 17, 10, -0.3, '#5a4636');
+    g.beginPath(); g.moveTo(360, 140); g.lineTo(378, 168); g.lineTo(370, 190); stroke(g, '#bba57d', 3);
+    g.beginPath(); g.moveTo(170, 200); g.quadraticCurveTo(230, 170, 300, 150); stroke(g, 'rgba(255,255,255,0.5)', 5);
+  },
+  harp(g) {
+    rr(g, 104, 420, 290, 32, 10); g.fillStyle = '#7a4a28'; g.fill();
+    const gold = lin(g, 0, 60, 0, 440, [[0, '#f7da7a'], [0.5, '#d9a836'], [1, '#a77a1e']]);
+    g.beginPath(); g.moveTo(150, 425); g.lineTo(378, 150); stroke(g, '#b9773f', 40);
+    g.beginPath(); g.moveTo(150, 425); g.lineTo(378, 150); stroke(g, '#d39258', 16);
+    const sb = x => 425 - (x - 150) * (275 / 228);
+    const neck = t => { const p0 = [140, 100], p1 = [215, 30], p2 = [305, 175], p3 = [388, 138]; const u = 1 - t;
+      return [u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]]; };
+    for (let k = 1; k <= 11; k++) { const [x, y] = neck(0.06 + k * 0.075); if (x > 375) continue; g.beginPath(); g.moveTo(x, y + 8); g.lineTo(x, sb(x) - 6); stroke(g, k % 3 === 0 ? '#e86b5e' : '#f6ecd2', 2.5); }
+    g.beginPath(); g.moveTo(140, 100); g.bezierCurveTo(215, 30, 305, 175, 388, 138); stroke(g, gold, 26);
+    g.beginPath(); g.moveTo(140, 100); g.bezierCurveTo(215, 30, 305, 175, 388, 138); stroke(g, 'rgba(255,248,210,0.55)', 6);
+    rr(g, 118, 92, 38, 336, 14); g.fillStyle = gold; g.fill();
+    for (let y = 140; y < 420; y += 46) { rr(g, 114, y, 46, 10, 5); g.fillStyle = '#b8862a'; g.fill(); }
+    ellipse(g, 137, 86, 30, 22, 0, '#f2cf62'); ellipse(g, 137, 86, 15, 11, 0, '#c9962c');
+    g.beginPath(); g.arc(392, 136, 18, 0, Math.PI * 1.6); stroke(g, '#d9a836', 9);
+  },
+  cat(g) {
+    rr(g, 140, 408, 200, 50, 8); g.fillStyle = lin(g, 140, 0, 340, 0, [[0, '#a37f3a'], [0.5, '#e8c46a'], [1, '#93712f']]); g.fill();
+    for (let x = 156; x < 330; x += 30) { g.beginPath(); g.moveTo(x, 420); g.lineTo(x + 10, 446); g.moveTo(x + 10, 420); g.lineTo(x, 446); stroke(g, '#7f5f22', 2.5); }
+    const bronze = lin(g, 160, 0, 340, 0, [[0, '#244a4f'], [0.45, '#5b9596'], [1, '#1f3f44']]);
+    g.beginPath(); g.moveTo(300, 404); g.bezierCurveTo(370, 404, 372, 352, 336, 340); stroke(g, '#2d5559', 22);
+    g.beginPath(); g.moveTo(180, 408); g.bezierCurveTo(170, 330, 190, 250, 222, 212); g.lineTo(268, 214); g.bezierCurveTo(320, 250, 332, 340, 318, 408); g.closePath(); g.fillStyle = bronze; g.fill();
+    rr(g, 202, 290, 30, 118, 14); g.fillStyle = '#3d7173'; g.fill(); rr(g, 236, 296, 28, 112, 14); g.fillStyle = '#356668'; g.fill();
+    g.beginPath(); g.moveTo(194, 150); g.lineTo(200, 66); g.lineTo(232, 128); g.closePath(); g.fillStyle = '#2f5d61'; g.fill();
+    g.beginPath(); g.moveTo(240, 128); g.lineTo(272, 66); g.lineTo(280, 152); g.closePath(); g.fillStyle = '#2a5357'; g.fill();
+    ellipse(g, 237, 168, 50, 46, 0, bronze); ellipse(g, 230, 190, 22, 16, 0, '#4a8486');
+    g.beginPath(); g.moveTo(212, 160); g.quadraticCurveTo(222, 150, 232, 160); g.quadraticCurveTo(222, 168, 212, 160); g.fillStyle = '#f2cf62'; g.fill();
+    g.beginPath(); g.moveTo(246, 160); g.quadraticCurveTo(256, 150, 266, 160); g.quadraticCurveTo(256, 168, 246, 160); g.fill();
+    ellipse(g, 222, 160, 2.5, 6, 0, '#1b2b2d'); ellipse(g, 256, 160, 2.5, 6, 0, '#1b2b2d');
+    g.beginPath(); g.ellipse(240, 222, 52, 16, 0, 0, Math.PI); stroke(g, '#e2b54a', 12);
+    for (let k = 0; k < 5; k++) ellipse(g, 202 + k * 19, 232 + Math.sin(k / 4 * Math.PI) * 6, 5, 5, 0, '#5f9fd6');
+    g.beginPath(); g.arc(276, 118, 8, 0, Math.PI * 2); stroke(g, '#f2cf62', 4);
+    g.beginPath(); g.moveTo(268, 230); g.bezierCurveTo(300, 260, 305, 320, 300, 380); stroke(g, 'rgba(160,220,215,0.35)', 8);
+  },
+};
+function makeCanvas(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; }
+const ARTS = OBJECTS.map(o => {
+  const img = makeCanvas(ART_N, ART_N), g = img.getContext('2d'); ART[o.art](g);
+  const sil = makeCanvas(ART_N, ART_N), s = sil.getContext('2d'); s.drawImage(img, 0, 0); s.globalCompositeOperation = 'source-in'; s.fillStyle = '#0d0a10'; s.fillRect(0, 0, ART_N, ART_N);
+  return { img, sil, alpha: g.getImageData(0, 0, ART_N, ART_N).data };
+});
+
+// ---- Cutting an object into blocks -------------------------------------------------------------
+const K = (r, c) => r * 64 + c;
+function shadowCells(i) {
+  const n = OBJECTS[i].grid, cs = ART_N / n, a = ARTS[i].alpha, out = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    let cov = 0, tot = 0;
+    for (let y = Math.floor(r * cs); y < (r + 1) * cs; y += 3) for (let x = Math.floor(c * cs); x < (c + 1) * cs; x += 3) { tot++; if (a[(y * ART_N + x) * 4 + 3] > 40) cov++; }
+    if (cov / tot >= tune.min_cover) out.push([r, c]);
+  }
+  return out;
+}
+function components(cells) {
+  const set = new Set(cells.map(([r, c]) => K(r, c))), seen = new Set(), comps = [];
+  for (const [r0, c0] of cells) {
+    if (seen.has(K(r0, c0))) continue; const comp = [], st = [[r0, c0]]; seen.add(K(r0, c0));
+    while (st.length) { const [r, c] = st.pop(); comp.push([r, c]); for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const k = K(r + dr, c + dc); if (set.has(k) && !seen.has(k)) { seen.add(k); st.push([r + dr, c + dc]); } } }
+    comps.push(comp);
+  }
+  return comps;
+}
+function cutBands(cells, k) {
+  const rows = [...new Set(cells.map(x => x[0]))].sort((a, b) => a - b), per = cells.length / k, out = [];
+  let cur = [], acc = 0, made = 0;
+  for (const r of rows) {
+    const row = cells.filter(x => x[0] === r); cur.push(...row); acc += row.length;
+    if (acc >= per * (made + 1) && made < k - 1) { out.push(cur); cur = []; made++; }
+  }
+  if (cur.length) out.push(cur);
+  return out.flatMap(components);
+}
+function cutGrow(cells, k, compact) {
+  const set = new Set(cells.map(([r, c]) => K(r, c))), owner = new Map();
+  const seeds = [cells[Math.floor(rng() * cells.length)]];
+  while (seeds.length < Math.min(k, cells.length)) {
+    let best = null, bd = -1;
+    for (const p of cells) { if (seeds.includes(p)) continue; const d = Math.min(...seeds.map(s => Math.abs(s[0] - p[0]) + Math.abs(s[1] - p[1]))) + rng() * 0.9; if (d > bd) { bd = d; best = p; } }
+    seeds.push(best);
+  }
+  const regions = seeds.map((s, i) => { owner.set(K(s[0], s[1]), i); return [s]; });
+  for (let changed = true; changed;) {
+    changed = false;
+    const order = regions.map((_, i) => i).sort((a, b) => regions[a].length - regions[b].length || a - b);
+    for (const i of order) {
+      const cand = [];
+      for (const [r, c] of regions[i]) for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const k2 = K(r + dr, c + dc); if (set.has(k2) && !owner.has(k2)) cand.push([r + dr, c + dc]); }
+      if (!cand.length) continue;
+      let pick;
+      if (compact) { let bs = -1; for (const p of cand) { const s = regions[i].filter(q => Math.abs(q[0] - p[0]) + Math.abs(q[1] - p[1]) === 1).length + rng() * 0.5; if (s > bs) { bs = s; pick = p; } } }
+      else pick = cand[Math.floor(rng() * cand.length)];
+      owner.set(K(pick[0], pick[1]), i); regions[i].push(pick); changed = true;
+    }
+  }
+  const rest = cells.filter(([r, c]) => !owner.has(K(r, c)));
+  return regions.concat(rest.length ? components(rest) : []);
+}
+function makePieceImage(i, cells) {
+  const n = OBJECTS[i].grid, cs = ART_N / n;
+  const minR = Math.min(...cells.map(x => x[0])), minC = Math.min(...cells.map(x => x[1]));
+  const h = Math.max(...cells.map(x => x[0])) - minR + 1, w = Math.max(...cells.map(x => x[1])) - minC + 1;
+  const cv = makeCanvas(w * cs, h * cs), g = cv.getContext('2d');
+  g.save(); g.beginPath(); for (const [r, c] of cells) g.rect((c - minC) * cs - 0.5, (r - minR) * cs - 0.5, cs + 1, cs + 1); g.clip();
+  g.drawImage(ARTS[i].img, -minC * cs, -minR * cs); g.restore();
+  return { cv, rel: cells.map(([r, c]) => [r - minR, c - minC]), sol: { r: minR, c: minC }, w, h };
+}
+function buildPuzzle(i) {
+  const o = OBJECTS[i], cells = shadowCells(i);
+  const parts = o.cut === 'bands' ? cutBands(cells, o.pieces) : cutGrow(cells, o.pieces, o.cut === 'compact');
+  const pieces = parts.map((p, k) => ({ id: k, obj: i, ...makePieceImage(i, p), decoy: false, placed: false }));
+  for (let d = 0; d < o.decoys; d++) { // a block from another object: it belongs nowhere here
+    const j = (i + 1 + d) % OBJECTS.length, oc = shadowCells(j), op = cutGrow(oc, OBJECTS[j].pieces, false);
+    const mid = op.slice().sort((a, b) => Math.abs(a.length - cells.length / o.pieces) - Math.abs(b.length - cells.length / o.pieces))[0];
+    const img = makePieceImage(j, mid);
+    // scale its cells to this object's grid so it looks like it could fit
+    pieces.push({ id: 100 + d, obj: j, ...img, decoy: true, placed: false, scaleFrom: OBJECTS[j].grid });
+  }
+  const order = pieces.map((_, k) => k); for (let k = order.length - 1; k > 0; k--) { const j = Math.floor(rng() * (k + 1)); [order[k], order[j]] = [order[j], order[k]]; }
+  pieces.forEach((p, k) => { p.slot = order[k]; });
+  return { cells, pieces };
+}
+
+// ---- State ------------------------------------------------------------------------------------
+let scene, state;
+const BOARD = { x: 60, y: 175, s: 600 };
+const TRAY = { x: 20, y: 800, w: 680, h: 430 };
+function reset() {
+  seed = Number(params.get('seed')) || CONFIG.seed;
+  state = { t: 0, score: 0, gained: '', done: OBJECTS.map(() => false), view: 'hub', sel: 0, cur: null, hints: 0, fails: 0, visitors: [], openAt: null, kbHub: false };
+  state.puzzles = OBJECTS.map((_, i) => buildPuzzle(i));
+  if (params.get('obj')) openObject(Math.max(0, Math.min(5, Number(params.get('obj')) - 1)));
+}
+const timeFor = i => tune['time_' + (i + 1)];
+function openObject(i) {
+  const pz = state.puzzles[i];
+  pz.pieces.forEach(p => { p.placed = false; });
+  const n = OBJECTS[i].grid;
+  state.cur = { i, pz, timeLeft: timeFor(i), wonAt: null, failAt: null, drag: null, sel: 0, kb: false, cursor: { r: 0, c: 0 }, lastTick: 99, wrongAt: -9, bcs: BOARD.s / n, t: 0 };
+  state.cur.tray = trayLayout(pz.pieces, state.cur.bcs);
+  state.view = 'puzzle';
+  events.push({ e: 'open', i });
+}
+function trayLayout(pieces, bcs) {
+  const maxDim = Math.max(...pieces.map(p => Math.max(p.w, p.h)));
+  let tc = Math.min(tune.tray_cell_max, bcs * 0.75), slot, per, rows;
+  for (;;) { slot = maxDim * tc + 20; per = Math.max(1, Math.floor((TRAY.w - 24) / slot)); rows = Math.ceil(pieces.length / per); if (rows * slot <= TRAY.h - 30 || tc <= 10) break; tc -= 1; }
+  const slots = [];
+  for (let k = 0; k < pieces.length; k++) {
+    const row = Math.floor(k / per), inRow = Math.min(per, pieces.length - row * per), col = k % per;
+    slots.push({ x: TRAY.x + (TRAY.w - inRow * slot) / 2 + col * slot, y: TRAY.y + 15 + (TRAY.h - 30 - rows * slot) / 2 + row * slot, s: slot });
+  }
+  return { tc, slots };
+}
+const pieceTC = (p, tl) => tl.tc; // every block shows at the same tray scale
+function trayPos(p, tl) { const sl = tl.slots[p.slot], tc = pieceTC(p, tl); return { x: sl.x + (sl.s - p.w * tc) / 2, y: sl.y + (sl.s - p.h * tc) / 2, tc }; }
+const unplaced = () => state.cur.pz.pieces.filter(p => !p.placed).sort((a, b) => a.slot - b.slot);
+function placedCount() { return state.cur.pz.pieces.filter(p => p.placed && !p.decoy).length; }
+const realCount = () => state.cur.pz.pieces.filter(p => !p.decoy).length;
+function tryDrop(p, r, c) {
+  const cur = state.cur;
+  if (!p.decoy && Math.abs(r - p.sol.r) <= tune.snap_reach && Math.abs(c - p.sol.c) <= tune.snap_reach) {
+    p.placed = true; sfx.place(); events.push({ e: 'place', id: p.id });
+    if (placedCount() === realCount()) winObject();
+    return true;
+  }
+  cur.wrongAt = cur.t; sfx.wrong(); return false;
+}
+function winObject() {
+  const cur = state.cur; cur.wonAt = cur.t; state.done[cur.i] = true; state.score++; sfx.win();
+  events.push({ e: 'won', i: cur.i });
+}
+function failObject() { const cur = state.cur; cur.failAt = cur.t; cur.drag = null; state.fails++; sfx.fail(); events.push({ e: 'fail', i: cur.i }); }
+function useHint() {
+  const cur = state.cur; if (cur.wonAt !== null || cur.failAt !== null) return;
+  const p = cur.pz.pieces.find(q => !q.placed && !q.decoy); if (!p) return;
+  if (cur.drag && cur.drag.p === p) cur.drag = null;
+  cur.timeLeft = Math.max(0.5, cur.timeLeft - tune.hint_cost); state.hints++;
+  tryDrop(p, p.sol.r, p.sol.c);
+}
+function backToHub() {
+  state.view = 'hub'; state.cur = null;
+  if (state.done.every(Boolean) && state.openAt === null) {
+    state.openAt = state.t; sfx.open(); state.gained = 'Bảo tàng mở cửa!';
+    state.visitors = [];
+    for (let k = 0; k < 7; k++) state.visitors.push({ lane: k % 2, x: -60 - k * 110, v: 40 + rng() * 25, shirt: ['#e0574f', '#5f9fd6', '#9cc7a0', '#e2b54a', '#c8a2e0'][k % 5], hair: ['#3d2a20', '#c98a3d', '#1e1a1a', '#8a5a3e'][k % 4], kid: k % 3 === 2 });
+  }
+}
+
+// ---- Buttons -------------------------------------------------------------------------------------
+const BTN = { back: { x: 26, y: 28, w: 80, h: 76 }, hint: { x: 614, y: 28, w: 80, h: 76 }, mute: { x: 614, y: 28, w: 80, h: 76 },
+  start: { x: 185, y: 1090, w: 350, h: 100 }, cont: { x: 160, y: 1100, w: 400, h: 96 }, retry: { x: 160, y: 1000, w: 400, h: 96 }, hub: { x: 160, y: 1116, w: 400, h: 86 }, again: { x: 185, y: 1170, w: 350, h: 90 } };
+const inBtn = (b, p) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+function drawButton(b, label, c, size = 36) {
+  fillRR(b.x, b.y + 6, b.w, b.h, b.h / 2, 'rgba(0,0,0,0.25)'); fillRR(b.x, b.y, b.w, b.h, b.h / 2, c); strokeRR(b.x, b.y, b.w, b.h, b.h / 2, C.line, 3);
+  text(label, b.x + b.w / 2, b.y + b.h / 2 + 1, size, C.ink, 'center', '800');
+}
+function drawIconBtn(b, kind) {
+  fillRR(b.x, b.y + 5, b.w, b.h, 22, 'rgba(0,0,0,0.25)'); fillRR(b.x, b.y, b.w, b.h, 22, C.cream); strokeRR(b.x, b.y, b.w, b.h, 22, C.line, 3);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2; ctx.fillStyle = C.ink; ctx.strokeStyle = C.ink; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (kind === 'back') {
+    ctx.beginPath(); ctx.moveTo(cx - 18, cy + 2); ctx.lineTo(cx, cy - 16); ctx.lineTo(cx + 18, cy + 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - 13, cy - 2); ctx.lineTo(cx - 13, cy + 18); ctx.lineTo(cx + 13, cy + 18); ctx.lineTo(cx + 13, cy - 2); ctx.stroke();
+  } else if (kind === 'hint') {
+    ctx.beginPath(); ctx.arc(cx, cy - 6, 15, Math.PI * 0.8, Math.PI * 2.2); ctx.fillStyle = C.gold; ctx.fill(); ctx.lineWidth = 4; ctx.stroke();
+    fillRR(cx - 8, cy + 8, 16, 11, 3, C.inkSoft); ctx.beginPath(); ctx.moveTo(cx - 5, cy + 24); ctx.lineTo(cx + 5, cy + 24); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(cx - 20, cy - 8); ctx.lineTo(cx - 10, cy - 8); ctx.lineTo(cx + 2, cy - 18); ctx.lineTo(cx + 2, cy + 18); ctx.lineTo(cx - 10, cy + 8); ctx.lineTo(cx - 20, cy + 8); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = 4;
+    if (muted) { ctx.beginPath(); ctx.moveTo(cx + 10, cy - 10); ctx.lineTo(cx + 24, cy + 10); ctx.moveTo(cx + 24, cy - 10); ctx.lineTo(cx + 10, cy + 10); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.arc(cx + 4, cy, 12, -0.8, 0.8); ctx.stroke(); ctx.beginPath(); ctx.arc(cx + 4, cy, 21, -0.8, 0.8); ctx.stroke(); }
+  }
+}
+
+// ---- The museum hall ---------------------------------------------------------------------------
+const SLOT = i => ({ x: 80 + (i % 2) * 330, y: 205 + Math.floor(i / 2) * 305, s: 230 }); // object box in the hall
+function drawHall(lit) {
+  ctx.fillStyle = lin(ctx, 0, 0, 0, H, [[0, '#f3e6d0'], [0.75, '#e9d9bf'], [1, '#d9c4a3']]); ctx.fillRect(0, 0, W, H);
+  for (const x of [20, 680]) { ctx.fillStyle = lin(ctx, x, 0, x + 26, 0, [[0, '#d8c6a8'], [0.5, '#f6ecdc'], [1, '#cdb894']]); ctx.fillRect(x, 150, 26, H); }
+  for (let k = 0; k < 3; k++) { // arches on the back wall
+    const ax = 120 + k * 240; ctx.beginPath(); ctx.moveTo(ax - 70, 150 + 900); ctx.lineTo(ax - 70, 240); ctx.arc(ax, 240, 70, Math.PI, 0); ctx.lineTo(ax + 70, 1050); ctx.fillStyle = 'rgba(190,165,130,0.16)'; ctx.fill();
+  }
+  ctx.fillStyle = '#c9a77a'; ctx.fillRect(0, 150, W, 10);
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 9; c++) { ctx.fillStyle = (r + c) % 2 ? '#d7c19e' : '#efe1c6'; ctx.fillRect(c * 80, 1120 + r * 40, 80, 40); }
+  if (lit > 0) { ctx.fillStyle = `rgba(255,205,120,${0.18 * lit})`; ctx.fillRect(0, 0, W, H); }
+}
+function drawPedestal(x, y, w, done) {
+  ctx.fillStyle = 'rgba(80,60,40,0.18)'; ctx.beginPath(); ctx.ellipse(x + w / 2, y + 60, w * 0.46, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = lin(ctx, x, 0, x + w, 0, [[0, '#cbb895'], [0.5, '#f5ead6'], [1, '#bda885']]); ctx.fillRect(x + w * 0.12, y + 8, w * 0.76, 50);
+  fillRR(x, y, w, 14, 4, '#e8dac0'); strokeRR(x, y, w, 14, 4, '#a8916b', 2);
+  fillRR(x + w * 0.08, y + 52, w * 0.84, 12, 4, '#dccaa9');
+  fillRR(x + w * 0.3, y + 22, w * 0.4, 24, 5, done ? C.gold : '#a8916b');
+}
+function drawHub() {
+  const lit = state.openAt === null ? 0 : Math.min(1, (state.t - state.openAt) / 1.5);
+  drawHall(lit);
+  const n = state.done.filter(Boolean).length;
+  text('Bảo tàng Bóng', W / 2, 62, 46, C.ink, 'center', '800');
+  fillRR(210, 104, 300, 20, 10, '#e2d2b6'); fillRR(210, 104, Math.max(20, 300 * n / 6), 20, 10, C.gold); strokeRR(210, 104, 300, 20, 10, C.line, 2);
+  text(`${n}/6`, 540, 115, 24, C.inkSoft, 'left');
+  drawIconBtn(BTN.mute, 'mute');
+  OBJECTS.forEach((o, i) => {
+    const s = SLOT(i), done = state.done[i];
+    if (done) { ctx.fillStyle = rad(ctx, s.x + s.s / 2, s.y + s.s / 2, 10, s.s * 0.7, [[0, 'rgba(255,225,150,0.55)'], [1, 'rgba(255,225,150,0)']]); ctx.fillRect(s.x - 40, s.y - 40, s.s + 80, s.s + 80); }
+    ctx.drawImage(done ? ARTS[i].img : ARTS[i].sil, s.x, s.y, s.s, s.s);
+    drawPedestal(s.x + 20, s.y + s.s - 4, s.s - 40, done);
+    text(done ? o.name : `Vật ${i + 1}`, s.x + s.s / 2, s.y + s.s + 82, 22, done ? C.ink : C.inkSoft, 'center', done ? '800' : '700');
+    if (state.kbHub && state.sel === i) strokeRR(s.x - 8, s.y - 8, s.s + 16, s.s + 100, 24, C.gold, 5);
+    if (done) for (let k = 0; k < 3; k++) { const ph = state.t * 1.3 + k * 2.1 + i; sparkle(s.x + s.s * (0.2 + 0.3 * k), s.y + s.s * (0.25 + 0.2 * Math.sin(ph)), 9, 0.5 + 0.5 * Math.sin(ph * 2)); }
+  });
+  if (state.openAt !== null) {
+    for (const v of state.visitors) drawVisitor(v.x, v.lane ? 1185 : 1150, v.kid ? 0.75 : 1, v.shirt, v.hair, state.t * 6 + v.x * 0.05);
+    ctx.globalAlpha = lit;
+    fillRR(110, 140, 500, 64, 32, C.gold); strokeRR(110, 140, 500, 64, 32, C.line, 3);
+    text(state.gained, W / 2, 173, 34, C.ink, 'center', '800');
+    ctx.globalAlpha = 1;
+    if (state.t - state.openAt > 1.5) drawButton(BTN.again, 'Chơi lại', C.sage, 34);
+  } else text('Chạm một bóng đen để bắt đầu', W / 2, 1180, 26, C.inkSoft, 'center', '700');
+}
+function drawVisitor(x, y, s, shirt, hair, ph) {
+  const sw = Math.sin(ph) * 8 * s;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(60,40,30,0.2)'; ctx.beginPath(); ctx.ellipse(0, 46, 18, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.lineCap = 'round'; ctx.strokeStyle = '#3d3a4a'; ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.moveTo(-3, 18); ctx.lineTo(-3 + sw, 44); ctx.moveTo(3, 18); ctx.lineTo(3 - sw, 44); ctx.stroke();
+  fillRR(-12, -14, 24, 36, 9, shirt);
+  ctx.strokeStyle = shirt; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-10, -6); ctx.lineTo(-14 - sw * 0.6, 14); ctx.moveTo(10, -6); ctx.lineTo(14 + sw * 0.6, 14); ctx.stroke();
+  ctx.fillStyle = '#f2c9a5'; ctx.beginPath(); ctx.ellipse(0, -26, 11, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = hair; ctx.beginPath(); ctx.ellipse(0, -31, 12, 8, 0, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillRect(-12, -32, 5, 10);
+  ctx.fillStyle = '#3d2f2b'; ctx.fillRect(4, -27, 2.5, 3);
+  ctx.restore();
+}
+
+// ---- The puzzle ---------------------------------------------------------------------------------
+function boardCellAt(p) { const cur = state.cur, n = OBJECTS[cur.i].grid; const c = Math.floor((p.x - BOARD.x) / cur.bcs), r = Math.floor((p.y - BOARD.y) / cur.bcs); return r >= 0 && c >= 0 && r < n && c < n ? { r, c } : null; }
+function drawPieceAt(p, x, y, cs, alpha, framed) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  if (framed) {
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'; for (const [r, c] of p.rel) ctx.fillRect(x + c * cs + 3, y + r * cs + 5, cs, cs);
+    ctx.fillStyle = 'rgba(255,250,240,0.92)'; for (const [r, c] of p.rel) ctx.fillRect(x + c * cs, y + r * cs, cs, cs);
+  }
+  ctx.drawImage(p.cv, x, y, p.w * cs, p.h * cs);
+  if (framed) { // the block's outline: only the outer edges
+    const set = new Set(p.rel.map(([r, c]) => K(r, c))); ctx.strokeStyle = C.line; ctx.lineWidth = Math.max(2, cs * 0.06); ctx.lineCap = 'round'; ctx.beginPath();
+    for (const [r, c] of p.rel) {
+      const px = x + c * cs, py = y + r * cs;
+      if (!set.has(K(r - 1, c))) { ctx.moveTo(px, py); ctx.lineTo(px + cs, py); }
+      if (!set.has(K(r + 1, c))) { ctx.moveTo(px, py + cs); ctx.lineTo(px + cs, py + cs); }
+      if (!set.has(K(r, c - 1))) { ctx.moveTo(px, py); ctx.lineTo(px, py + cs); }
+      if (!set.has(K(r, c + 1))) { ctx.moveTo(px + cs, py); ctx.lineTo(px + cs, py + cs); }
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawPuzzle() {
+  const cur = state.cur, o = OBJECTS[cur.i], pz = cur.pz, n = o.grid, bcs = cur.bcs;
+  ctx.fillStyle = lin(ctx, 0, 0, 0, H, [[0, '#3a3040'], [1, '#231c28']]); ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = rad(ctx, W / 2, BOARD.y + BOARD.s / 2, 40, 420, [[0, 'rgba(255,230,180,0.30)'], [1, 'rgba(255,230,180,0)']]); ctx.fillRect(0, 100, W, 760);
+  // HUD
+  drawIconBtn(BTN.back, 'back'); drawIconBtn(BTN.hint, 'hint');
+  const tl = Math.max(0, cur.timeLeft), warn = tl <= tune.warn_time && cur.wonAt === null;
+  const pulse = warn ? 1 + 0.06 * Math.sin(cur.t * 12) : 1, pw = 190 * pulse, ph = 64 * pulse;
+  fillRR(W / 2 - pw / 2, 34, pw, ph, ph / 2, warn ? C.red : C.cream); strokeRR(W / 2 - pw / 2, 34, pw, ph, ph / 2, C.line, 3);
+  // a little clock face
+  const cx = W / 2 - pw / 2 + 36, cy = 34 + ph / 2; ctx.beginPath(); ctx.arc(cx, cy, 18, 0, Math.PI * 2); ctx.fillStyle = '#fffaf0'; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 3; ctx.stroke();
+  const frac = tl / timeFor(cur.i); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); ctx.closePath(); ctx.fillStyle = warn ? C.red : C.sage; ctx.fill();
+  const mm = Math.floor(Math.ceil(tl) / 60), ss = Math.ceil(tl) % 60;
+  text(`${mm}:${String(ss).padStart(2, '0')}`, W / 2 + 20, 34 + ph / 2 + 1, 34, warn ? '#fff' : C.ink, 'center', '800');
+  text(`Vật ${cur.i + 1}/6 · ${o.name}`, W / 2, 135, 28, '#f3e6d0', 'center', '700');
+  // the shadow and its grid
+  const shake = cur.t - cur.wrongAt < 0.25 ? Math.sin((cur.t - cur.wrongAt) * 80) * 5 : 0;
+  ctx.save(); ctx.translate(shake, 0);
+  ctx.drawImage(ARTS[cur.i].sil, BOARD.x, BOARD.y, BOARD.s, BOARD.s);
+  const filled = new Set(); for (const p of pz.pieces) if (p.placed && !p.decoy) for (const [r, c] of p.rel) filled.add(K(r + p.sol.r, c + p.sol.c));
+  ctx.strokeStyle = 'rgba(255,240,210,0.16)'; ctx.lineWidth = 1.5;
+  for (const [r, c] of pz.cells) if (!filled.has(K(r, c))) ctx.strokeRect(BOARD.x + c * bcs + 2, BOARD.y + r * bcs + 2, bcs - 4, bcs - 4);
+  const won = cur.wonAt !== null, wonK = won ? Math.min(1, (cur.t - cur.wonAt) / 0.8) : 0;
+  if (won) { ctx.fillStyle = rad(ctx, W / 2, BOARD.y + BOARD.s / 2, 10, 380, [[0, `rgba(255,220,140,${0.5 * wonK})`], [1, 'rgba(255,220,140,0)']]); ctx.fillRect(0, BOARD.y - 60, W, BOARD.s + 120); }
+  for (const p of pz.pieces) if (p.placed && !p.decoy) drawPieceAt(p, BOARD.x + p.sol.c * bcs, BOARD.y + p.sol.r * bcs, bcs, 1, false);
+  if (!won) { // faint seams between placed blocks
+    for (const p of pz.pieces) if (p.placed && !p.decoy) { ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; for (const [r, c] of p.rel) ctx.strokeRect(BOARD.x + (c + p.sol.c) * bcs, BOARD.y + (r + p.sol.r) * bcs, bcs, bcs); }
+  } else for (let k = 0; k < 7; k++) { const a = k / 7 * Math.PI * 2 + cur.t * 0.6; sparkle(W / 2 + Math.cos(a) * 270 * wonK, BOARD.y + BOARD.s / 2 + Math.sin(a) * 270 * wonK, 14, wonK * (0.6 + 0.4 * Math.sin(cur.t * 5 + k))); }
+  ctx.restore();
+  // drag preview
+  const d = cur.drag;
+  if (d && d.moved) { const t = dropCell(d); ctx.strokeStyle = 'rgba(255,240,200,0.8)'; ctx.lineWidth = 3; ctx.setLineDash([8, 6]); for (const [r, c] of d.p.rel) ctx.strokeRect(BOARD.x + (c + t.c) * bcs + 3, BOARD.y + (r + t.r) * bcs + 3, bcs - 6, bcs - 6); ctx.setLineDash([]); }
+  if (cur.kb && !d && !won && cur.failAt === null) { const p = unplaced()[cur.sel]; if (p) { drawPieceAt(p, BOARD.x + cur.cursor.c * bcs, BOARD.y + cur.cursor.r * bcs, bcs, 0.6, true); } }
+  // tray
+  if (!won && cur.failAt === null) {
+    fillRR(TRAY.x, TRAY.y + 6, TRAY.w, TRAY.h, 34, 'rgba(0,0,0,0.3)'); fillRR(TRAY.x, TRAY.y, TRAY.w, TRAY.h, 34, '#f4ead9'); strokeRR(TRAY.x, TRAY.y, TRAY.w, TRAY.h, 34, C.line, 3);
+    const list = unplaced();
+    for (const p of pz.pieces) {
+      if (p.placed || (d && d.p === p)) continue;
+      const sl = cur.tray.slots[p.slot], pos = trayPos(p, cur.tray), sel = cur.kb && list[cur.sel] === p;
+      fillRR(sl.x + 5, sl.y + 5, sl.s - 10, sl.s - 10, 16, sel ? '#f9e3b4' : '#ebdcc6');
+      if (sel) strokeRR(sl.x + 5, sl.y + 5, sl.s - 10, sl.s - 10, 16, C.gold, 4);
+      drawPieceAt(p, pos.x, pos.y, pos.tc, 1, true);
+    }
+    if (cur.i === 0 && placedCount() === 0 && !d) text('Kéo khối vào đúng chỗ trong bóng đen', W / 2, TRAY.y + 26, 24, C.ink, 'center', '700');
+    if (o.decoys && placedCount() === 0 && !d) text(`Cẩn thận: có ${o.decoys} khối không thuộc vật này`, W / 2, TRAY.y + 26, 24, C.red, 'center', '800');
+  }
+  if (d) { const cs = d.moved ? bcs : d.tc; drawPieceAt(d.p, d.x - d.gx * cs, d.y - d.gy * cs, cs, 0.95, true); }
+  // won / failed panels
+  if (won) {
+    const a = Math.min(1, (cur.t - cur.wonAt) / 0.5); ctx.globalAlpha = a;
+    fillRR(70, 830, 580, 400, 40, '#fbf3e6'); strokeRR(70, 830, 580, 400, 40, C.line, 3);
+    text('Hoàn thành!', W / 2, 890, 46, C.ink, 'center', '800');
+    text(o.name, W / 2, 945, 30, C.inkSoft, 'center', '700');
+    const left = Math.ceil(Math.max(0, cur.timeLeft)), stars = left >= timeFor(cur.i) * 0.5 ? 3 : left >= timeFor(cur.i) * 0.2 ? 2 : 1;
+    for (let k = 0; k < 3; k++) { const pop = Math.min(1, Math.max(0, (cur.t - cur.wonAt - 0.3 - k * 0.2) / 0.25)); if (pop > 0) drawStar(W / 2 + (k - 1) * 100, 1020, 38 * pop, k < stars ? C.gold : '#d8cbb8'); }
+    text(`Còn ${left} giây`, W / 2, 1075, 24, C.inkSoft, 'center', '700');
+    if (cur.t - cur.wonAt >= tune.win_delay) drawButton(BTN.cont, 'Về bảo tàng', C.sage, 34);
+    ctx.globalAlpha = 1;
+  }
+  if (cur.failAt !== null) {
+    const a = Math.min(1, (cur.t - cur.failAt) / 0.4); ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(20,10,20,0.45)'; ctx.fillRect(0, 0, W, H);
+    fillRR(70, 820, 580, 420, 40, '#fbf3e6'); strokeRR(70, 820, 580, 420, 40, C.line, 3);
+    text('Hết giờ!', W / 2, 885, 52, C.red, 'center', '800');
+    text('Ghép lại vật này nhé', W / 2, 945, 28, C.inkSoft, 'center', '700');
+    drawButton(BTN.retry, 'Thử lại', C.gold, 36); drawButton(BTN.hub, 'Về bảo tàng', C.cream, 30);
+    ctx.globalAlpha = 1;
+  }
+}
+function dropCell(d) { const cur = state.cur; return { r: Math.round((d.y - d.gy * cur.bcs - BOARD.y) / cur.bcs), c: Math.round((d.x - d.gx * cur.bcs - BOARD.x) / cur.bcs) }; }
+function dropFloat(d) { const cur = state.cur; return { r: (d.y - d.gy * cur.bcs - BOARD.y) / cur.bcs, c: (d.x - d.gx * cur.bcs - BOARD.x) / cur.bcs }; }
+
+// ---- Pointer ------------------------------------------------------------------------------------
+function handlePointer(ev) {
+  if (scene !== 'play') { if (ev.k === 'down' && scene === 'title') { reset(); scene = 'play'; } return; }
+  if (state.view === 'hub') {
+    if (ev.k !== 'down') return;
+    if (inBtn(BTN.mute, ev)) { setMuted(!muted); return; }
+    if (state.openAt !== null) { if (state.t - state.openAt > 1.5 && inBtn(BTN.again, ev)) { reset(); } return; }
+    for (let i = 0; i < OBJECTS.length; i++) { const s = SLOT(i); if (ev.x >= s.x && ev.x <= s.x + s.s && ev.y >= s.y && ev.y <= s.y + s.s + 90 && !state.done[i]) { state.kbHub = false; openObject(i); return; } }
+    return;
+  }
+  const cur = state.cur;
+  if (ev.k === 'down') {
+    if (cur.wonAt !== null) { if (cur.t - cur.wonAt >= tune.win_delay && inBtn(BTN.cont, ev)) backToHub(); return; }
+    if (cur.failAt !== null) { if (inBtn(BTN.retry, ev)) openObject(cur.i); else if (inBtn(BTN.hub, ev)) backToHub(); return; }
+    if (inBtn(BTN.back, ev)) { backToHub(); return; }
+    if (inBtn(BTN.hint, ev)) { useHint(); return; }
+    cur.kb = false;
+    for (const p of cur.pz.pieces) {
+      if (p.placed) continue; const sl = cur.tray.slots[p.slot];
+      if (ev.x >= sl.x && ev.x <= sl.x + sl.s && ev.y >= sl.y && ev.y <= sl.y + sl.s) {
+        const pos = trayPos(p, cur.tray);
+        cur.drag = { p, sx: ev.x, sy: ev.y, x: ev.x, y: ev.y, tc: pos.tc, gx: Math.max(0, Math.min(p.w - 0.01, (ev.x - pos.x) / pos.tc)), gy: Math.max(0, Math.min(p.h - 0.01, (ev.y - pos.y) / pos.tc)), moved: false };
+        sfx.pick(); return;
+      }
+    }
+  } else if (ev.k === 'move' && cur.drag) {
+    const d = cur.drag; d.x = ev.x; d.y = ev.y; if (Math.hypot(d.x - d.sx, d.y - d.sy) > tune.tap_slop) d.moved = true;
+  } else if (ev.k === 'up' && cur.drag) {
+    const d = cur.drag; cur.drag = null;
+    if (!d.moved || cur.failAt !== null) return;
+    const f = dropFloat(d);
+    if (f.r < -1.5 || f.c < -1.5 || f.r > OBJECTS[cur.i].grid + 0.5 || f.c > OBJECTS[cur.i].grid + 0.5) { sfx.pick(); return; } // dropped off the shadow: back to the tray quietly
+    tryDrop(d.p, f.r, f.c);
+  }
+}
+
+// ---- Keyboard ------------------------------------------------------------------------------------
+function keyboard() {
+  if (state.view === 'hub') {
+    if (state.openAt !== null) { if (state.t - state.openAt > 1.5 && pressed('Enter')) reset(); return; }
+    const todo = OBJECTS.map((_, i) => i).filter(i => !state.done[i]);
+    const mv = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 2, ArrowUp: -2 };
+    for (const k in mv) if (pressed(k)) { state.kbHub = true; state.sel = (state.sel + mv[k] + 6) % 6; }
+    if (pressed('Enter') || pressed('Space')) { const i = state.kbHub && !state.done[state.sel] ? state.sel : todo[0]; if (i !== undefined) openObject(i); }
+    return;
+  }
+  const cur = state.cur;
+  if (cur.wonAt !== null) { if (cur.t - cur.wonAt >= tune.win_delay && (pressed('Enter') || pressed('Space'))) backToHub(); return; }
+  if (cur.failAt !== null) { if (pressed('Enter') || pressed('Space')) openObject(cur.i); if (pressed('Escape')) backToHub(); return; }
+  if (pressed('Escape')) { backToHub(); return; }
+  if (pressed('KeyH')) useHint();
+  const list = unplaced(); if (!list.length) return;
+  if (cur.sel >= list.length) cur.sel = 0;
+  if (pressed('KeyE') || pressed('Tab')) { cur.sel = (cur.sel + 1) % list.length; cur.kb = true; }
+  if (pressed('KeyQ')) { cur.sel = (cur.sel - 1 + list.length) % list.length; cur.kb = true; }
+  const n = OBJECTS[cur.i].grid;
+  for (const [k, dr, dc] of [['ArrowLeft', 0, -1], ['ArrowRight', 0, 1], ['ArrowUp', -1, 0], ['ArrowDown', 1, 0]]) if (pressed(k)) { cur.kb = true; cur.cursor.r = Math.max(0, Math.min(n - 1, cur.cursor.r + dr)); cur.cursor.c = Math.max(0, Math.min(n - 1, cur.cursor.c + dc)); }
+  if (cur.kb && pressed('Space')) tryDrop(list[cur.sel], cur.cursor.r, cur.cursor.c);
+}
+
+// ---- Scenes ---------------------------------------------------------------------------------------
+const scenes = {
+  figures: {
+    update(dt) { state.t += dt; },
+    draw() {
+      drawHall(0); text('Hiện vật', W / 2, 60, 40, C.ink, 'center', '800');
+      OBJECTS.forEach((o, i) => { const x = 40 + (i % 2) * 340, y = 110 + Math.floor(i / 2) * 330; ctx.drawImage(ARTS[i].img, x + 20, y, 260, 260); text(o.name, x + 150, y + 280, 24, C.ink); });
+      drawVisitor(360, 1150, 1.6, '#5f9fd6', '#3d2a20', state.t * 6); text('Khách tham quan', 360, 1240, 22, C.ink);
+    },
+  },
+  title: {
+    update(dt) { state.t += dt; if (pressed('Enter') || pressed('Space')) { reset(); scene = 'play'; } },
+    draw() {
+      drawHall(0.3);
+      text('Shadow', W / 2, 150, 88, C.ink, 'center', '800'); text('Museum', W / 2, 240, 88, C.ink, 'center', '800');
+      text('Ghép khối để hiện vật thể', W / 2, 310, 30, C.inkSoft, 'center', '700');
+      const sw = 200 + Math.sin(state.t * 1.4) * 4;
+      ctx.drawImage(ARTS[0].sil, 110, 370, sw, sw); ctx.drawImage(ARTS[0].img, 410, 370, 200, 200);
+      ctx.save(); ctx.beginPath(); ctx.moveTo(320, 470); ctx.lineTo(400, 470); stroke(ctx, C.inkSoft, 6); ctx.beginPath(); ctx.moveTo(385, 455); ctx.lineTo(400, 470); ctx.lineTo(385, 485); stroke(ctx, C.inkSoft, 6); ctx.restore();
+      drawPedestal(130, 566, 160, false); drawPedestal(430, 566, 160, true);
+      CONTROLS.forEach((c, i) => text(c, W / 2, 760 + i * 52, 26, C.ink, 'center', '600'));
+      drawButton(BTN.start, 'Vào bảo tàng', C.gold, 36);
+    },
+  },
+  play: {
+    update(dt) {
+      state.t += dt;
+      while (ptrQ.length) handlePointer(ptrQ.shift());
+      keyboard();
+      if (state.view === 'puzzle' && state.cur) {
+        const cur = state.cur; cur.t += dt;
+        if (cur.wonAt === null && cur.failAt === null) {
+          cur.timeLeft -= dt;
+          const sec = Math.ceil(cur.timeLeft);
+          if (sec <= tune.warn_time && sec < cur.lastTick && sec > 0) sfx.tick();
+          cur.lastTick = sec;
+          if (cur.timeLeft <= 0) failObject();
+        }
+      }
+      for (const v of state.visitors) { v.x += v.v * dt; if (v.x > W + 60) v.x = -60; }
+    },
+    draw() { if (state.view === 'hub') drawHub(); else drawPuzzle(); },
+  },
+};
+
+// ---- Loop -----------------------------------------------------------------------------------------
+function step() {
+  if (pressed('KeyM')) { setMuted(!muted); hit.delete('KeyM'); }
+  if (scene !== 'play') { for (const ev of ptrQ) handlePointer(ev); ptrQ.length = 0; }
+  scenes[scene].update(STEP); hit.clear();
+}
+let last, acc = 0, ALPHA = 1;
+function tick() { const now = clock.now(); acc += Math.min(now - last, 0.25); last = now; while (acc >= STEP) { step(); acc -= STEP; } ALPHA = acc / STEP; drawFrame(); }
+function drawFrame() { scenes[scene].draw(); }
+function frame() { tick(); requestAnimationFrame(frame); }
+function timer() { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
+
+window.game = {
+  get scene() { return scene; },
+  get state() { return state; },
+  press(code) { hit.add(code); },
+  hold(code, on) { on ? down.add(code) : down.delete(code); },
+  get events() { return events; },
+  step(n = 1, draw = true, alpha = 1) { for (let i = 0; i < n; i++) step(); if (draw) { ALPHA = alpha; drawFrame(); } },
+};
+
+reset();
+scene = params.get('scene') || 'title';
+last = clock.now();
+if (params.get('manual') === '1') drawFrame();
+else { requestAnimationFrame(frame); setInterval(timer, 50); }
+</script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+# The one-shot's small check (check-run/1).
+# Written by one-shot-check.sh --record: the results are /prototype's reading of
+# evidence/self-check.tsv; never edited by hand.
+kind: check-run/1
+engine: web
+browser: "HeadlessChrome/157.0.0.0"
+time: "2026-11-16 00:14:54"
+checks:
+  - id: boots
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: shot
+    result: pass
+    evidence:
+      - "evidence/play.png"
+  - id: outlines
+    result: pass
+    evidence:
+      - "evidence/figures.png"
+  - id: brief-words
+    result: pass
+    evidence:
+      - "evidence/brief-words.tsv"
+  - id: emoji
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: nearest-game
+    result: pass
+    evidence:
+      - "evidence/nearest-game.txt"
+brief_checklist:
+  - id: L1
+    result: pass
+    evidence: "evidence/figures.png"
+    item: "Look: tranh minh họa mượt vẽ bằng vector: sảnh bảo tàng tường kem, cột vòm, sàn ca-rô; 6 vật khác nhau (tượng bán thân, bình gốm, mũ giáp, sọ khủng long, đàn hạc, tượng mèo Ai Cập) có đổ bóng và highlight; vật chưa giải là bóng đen tuyền; vật xong có đèn rọi ấm. Mọi hình đều được vẽ, không emoji, không hình tròn trơn."
+  - id: L2
+    result: pass
+    evidence: "evidence/obj4.png"
+    item: "References: Pixel Builder - Picture Puzzle (kéo vật vào bóng đen trong cảnh lớn), Room Sort (khối điền vào lưới)."
+  - id: L3
+    result: pass
+    evidence: "evidence/play.png"
+    item: "View: 2D · Camera: cố định, màn dọc như điện thoại; zoom từ sảnh vào từng vật."
+  - id: F1
+    result: pass
+    evidence: "evidence/hub.png"
+    item: "Sảnh bảo tàng với 6 vật khác nhau, vật chưa xong là bóng đen"
+  - id: F2
+    result: pass
+    evidence: "index.html:392"
+    item: "Màn ghép: kéo khối mang mảnh hình vào bóng, hít vào nếu đúng, bật về nếu sai"
+  - id: F3
+    result: pass
+    evidence: "evidence/obj6.png"
+    item: "Độ khó tăng: cắt thẳng → hình L/T/Z → khối nhỏ hình lạ + khối mồi"
+  - id: F4
+    result: pass
+    evidence: "evidence/timeout.png"
+    item: "Đồng hồ đếm ngược mỗi vật, cảnh báo 10 giây cuối"
+  - id: F5
+    result: pass
+    evidence: "evidence/timeout.png"
+    item: "Thua khi hết giờ, nút Thử lại chơi lại vật đó"
+  - id: F6
+    result: pass
+    evidence: "index.html:405"
+    item: "Gợi ý (trừ giờ)"
+  - id: F7
+    result: pass
+    evidence: "evidence/opened.png"
+    item: "Vật tỏa sáng khi xong; cả 6 xong thì bảo tàng mở cửa, khách vào"
+  - id: M1
+    result: pass
+    evidence: "evidence/hub.png"
+    item: "Sảnh bảo tàng với 6 bóng đen trên bệ."
+  - id: M2
+    result: pass
+    evidence: "evidence/play.png"
+    item: "Chạm bóng số 1 (tượng bán thân) thì zoom vào, đồng hồ 60 giây chạy."
+  - id: M3
+    result: pass
+    evidence: "evidence/won1.png"
+    item: "Khay có 3 khối to cắt thẳng, mỗi khối mang một dải hình của bức tượng."
+  - id: M4
+    result: pass
+    evidence: "evidence/won1.png"
+    item: "Kéo khối có cái đầu lên trên: nó hít vào, mảnh màu hiện ra."
+  - id: M5
+    result: pass
+    evidence: "evidence/opened.png"
+    item: "Đặt nốt 2 khối, bức tượng tỏa sáng, quay về sảnh: bệ số 1 giờ có tượng màu dưới đèn rọi."
+  - id: C1
+    result: pass
+    evidence: "config.js:9"
+    item: "Vật 1–2: 3–4 khối to cắt thẳng, 60 giây, gần như không thua."
+  - id: C2
+    result: pass
+    evidence: "config.js:30"
+    item: "Vật 3–4: 6–8 khối hình L, T, Z nhiều khối na ná nhau, 75 giây."
+  - id: C3
+    result: pass
+    evidence: "evidence/obj6.png"
+    item: "Vật 5–6: 10–12 khối nhỏ hình lạ cộng 1–2 khối mồi không thuộc vật đó, 90 giây."
+  - id: C4
+    result: pass
+    evidence: "config.js:15"
+    item: "Còn 10 giây thì đồng hồ đỏ và tích tắc."
+  - id: C5
+    result: pass
+    evidence: "config.js:16"
+    item: "Gợi ý đặt hộ 1 khối nhưng trừ 5 giây."
+  - id: C6
+    result: pass
+    evidence: "evidence/timeout.png"
+    item: "Hết giờ thì thua: khối về khay, chơi lại vật đó; các vật đã xong giữ nguyên."
+measures:
+  - id: step-time
+    value: 7.100
+    unit: ms
+    by: browser
+    detail: "mean 0.061 ms, slowest 7.100 ms, 134 steps"

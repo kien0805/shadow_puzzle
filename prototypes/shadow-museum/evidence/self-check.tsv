@@ -1,0 +1,37 @@
+time	2026-11-16 00:14:54
+keep	lines	0	pinned	0
+checklist	L1	unlisted	-	Look: tranh minh họa mượt vẽ bằng vector: sảnh bảo tàng tường kem, cột vòm, sàn ca-rô; 6 vật khác nhau (tượng bán thân, bình gốm, mũ giáp, sọ khủng long, đàn hạc, tượng mèo Ai Cập) có đổ bóng và highlight; vật chưa giải là bóng đen tuyền; vật xong có đèn rọi ấm. Mọi hình đều được vẽ, không emoji, không hình tròn trơn.	
+checklist	L2	unlisted	-	References: Pixel Builder - Picture Puzzle (kéo vật vào bóng đen trong cảnh lớn), Room Sort (khối điền vào lưới).	
+checklist	L3	unlisted	-	View: 2D · Camera: cố định, màn dọc như điện thoại; zoom từ sảnh vào từng vật.	
+checklist	F1	unlisted	-	Sảnh bảo tàng với 6 vật khác nhau, vật chưa xong là bóng đen	
+checklist	F2	unlisted	-	Màn ghép: kéo khối mang mảnh hình vào bóng, hít vào nếu đúng, bật về nếu sai	
+checklist	F3	unlisted	-	Độ khó tăng: cắt thẳng → hình L/T/Z → khối nhỏ hình lạ + khối mồi	
+checklist	F4	unlisted	-	Đồng hồ đếm ngược mỗi vật, cảnh báo 10 giây cuối	
+checklist	F5	unlisted	-	Thua khi hết giờ, nút Thử lại chơi lại vật đó	
+checklist	F6	unlisted	-	Gợi ý (trừ giờ)	
+checklist	F7	unlisted	-	Vật tỏa sáng khi xong; cả 6 xong thì bảo tàng mở cửa, khách vào	
+checklist	M1	unlisted	-	Sảnh bảo tàng với 6 bóng đen trên bệ.	
+checklist	M2	unlisted	-	Chạm bóng số 1 (tượng bán thân) thì zoom vào, đồng hồ 60 giây chạy.	
+checklist	M3	unlisted	-	Khay có 3 khối to cắt thẳng, mỗi khối mang một dải hình của bức tượng.	
+checklist	M4	unlisted	-	Kéo khối có cái đầu lên trên: nó hít vào, mảnh màu hiện ra.	
+checklist	M5	unlisted	-	Đặt nốt 2 khối, bức tượng tỏa sáng, quay về sảnh: bệ số 1 giờ có tượng màu dưới đèn rọi.	
+checklist	C1	unlisted	-	Vật 1–2: 3–4 khối to cắt thẳng, 60 giây, gần như không thua.	
+checklist	C2	unlisted	-	Vật 3–4: 6–8 khối hình L, T, Z nhiều khối na ná nhau, 75 giây.	
+checklist	C3	unlisted	-	Vật 5–6: 10–12 khối nhỏ hình lạ cộng 1–2 khối mồi không thuộc vật đó, 90 giây.	
+checklist	C4	unlisted	-	Còn 10 giây thì đồng hồ đỏ và tích tắc.	
+checklist	C5	unlisted	-	Gợi ý đặt hộ 1 khối nhưng trừ 5 giây.	
+checklist	C6	unlisted	-	Hết giờ thì thua: khối về khay, chơi lại vật đó; các vật đã xong giữ nguyên.	
+browser	HeadlessChrome/157.0.0.0
+scene	play	0	title
+scene	play	1	play
+digits	log	800 34px "Segoe UI", system-ui, sans-serif	proportional	4.665
+digits	log	bold 28px "Segoe UI", system-ui, sans-serif	tabular	0
+measure	step-time	play	0.061	7.100	134
+lane	play	stop	2.2	1753
+uncaught	play	0
+text	play	canvas	631,29,671,43	27.0	11.22	inside	0:59
+text	play	canvas	546,68,733,84	21.9	9.06	inside	Vật 1/6 · Tượng bán thân
+text	play	canvas	516,457,764,472	19.4	10.74	inside	Kéo khối vào đúng chỗ trong bóng đen
+screen	play	drawn
+shot	play	prototypes/shadow-museum/evidence/play.png
+responds	changed	22

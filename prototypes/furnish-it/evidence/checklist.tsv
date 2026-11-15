@@ -1,0 +1,20 @@
+L1	pass	evidence/clear2.png	pastel walls and floors, rounded furniture with pillows, leaf veins and book spines, soft shadows, warm glow, sleeping cat and dust motes
+L2	pass	evidence/play.png	pastel palette from A Little to the Left; blocks fill a floor grid like Room Sort
+L3	pass	evidence/clear1.png	2D fixed top-down, portrait 720x1280
+F1	pass	evidence/results.png	six rooms with their own furniture sets, all solved in the run
+F2	pass	index.html:723	green/red cell preview on drag, piece snaps to rounded cell
+F3	pass	index.html:640	rotation by tap in the tray (or R) from room 3; pieces arrive turned
+F4	pass	evidence/room6.png	fixed hatched built-ins on # cells (also used in room 1)
+F5	pass	evidence/clear1.png	room lights warm, cat curls on the largest piece, motes float
+F6	pass	evidence/clear1.png	reset and hint buttons; hint places one piece in its solution spot
+F7	pass	evidence/results.png	end screen shows the whole house
+M1	pass	evidence/play.png	room 1: 4x4 grid, 6 fixed cells, 3 pieces
+M2	pass	evidence/play.png	tutorial hand drags the bed from the tray to its spot
+M3	not_assessed	index.html:600	snap and sound are in code; a sound cannot be checked from a shot
+M4	pass	index.html:723	green when it fits, red when it overlaps
+M5	pass	evidence/clear1.png	room full: lights warm, cat, three stars
+M6	pass	evidence/clear1.png	"Phòng tiếp" button moves to the next room
+C1	pass	config.js:23	rooms 1-2 are small and pieces come unturned
+C2	pass	config.js:11	rotate_from 3
+C3	pass	evidence/room6.png	rooms 4-6 have fixed cells, bigger grids (6x6 to 7x7) and 11-14 pieces
+C4	pass	index.html:688	no lose state: a bad drop returns the piece, reset clears the room
