@@ -173,3 +173,6 @@ $RECYCLE.BIN/
 # the project root. Anchored so a reports/ folder elsewhere stays tracked.
 /reports/
 /test-results/
+
+# Reference screenshots pasted while prototyping: kept local, not shared
+references/
