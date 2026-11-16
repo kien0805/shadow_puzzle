@@ -1,6 +1,6 @@
 // PROTOTYPE - NOT FOR PRODUCTION
 // Question: Kéo từng bộ phận của vật thể vào bóng đen cho nó hiện ra có đủ vui để làm hết 6 vật không?
-// Date: 2026-11-16
+// Date: 2026-11-17
 // Every tuning value lives here, each with value, min, max and step. The game reads them live
 // through tune.<name> (index.html).
 window.CONFIG = {
@@ -8,18 +8,23 @@ window.CONFIG = {
   volume: { value: 0.5, min: 0, max: 1, step: 0.05 },
   snap_dist: { value: 60, min: 10, max: 200, step: 5 },    // px: how far from its true spot a dropped part still snaps in
   drag_lift: { value: 40, min: 0, max: 160, step: 5 },     // px: how far above the finger a dragged part rides
-  tray_card_max: { value: 150, min: 80, max: 200, step: 2 }, // px: largest card in the tray (shrinks to fit)
-  thumb_zoom_max: { value: 2, min: 1, max: 4, step: 0.1 }, // x: how much a small part may be enlarged on its card
+  thumb_zoom_max: { value: 1.4, min: 0.4, max: 4, step: 0.1 }, // x: largest a piece may be drawn in its tray slot, screen px per art px
   key_speed: { value: 260, min: 60, max: 800, step: 20 },  // px/s: how fast the arrows move a part
   tap_slop: { value: 12, min: 4, max: 40, step: 1 },       // px: a press moving less than this is a tap
-  win_delay: { value: 1.4, min: 0, max: 4, step: 0.1 },    // s of the glow before "back to the museum" shows
+  win_delay: { value: 1.9, min: 0, max: 4, step: 0.1 },    // s of the glow before "back to the museum" shows
   whimsy_size: { value: 0.8, min: 0.4, max: 1.2, step: 0.05 },   // shaped pieces (cat, fish, bird, heart): size as a share of a cell
   piece_depth: { value: 12, min: 0, max: 28, step: 1 },          // art px: how thick pieces and objects stand, like toy blocks
+  piece_depth_3d: { value: 20, min: 6, max: 40, step: 1 },        // art px: how thick the 3D pieces are (the hollow is a little shallower)
+  inflate: { value: 1, min: 0.3, max: 1.5, step: 0.05 },             // how round the finished 3D objects are: 1 is round all the way through
+  cam_tilt: { value: 10, min: 0, max: 40, step: 1 },              // degrees: how far the puzzle camera looks down at the standing board
+  lift_height: { value: 70, min: 10, max: 200, step: 5 },          // world units: how high a dragged piece floats over the board
   jigsaw_jitter: { value: 0.2, min: 0, max: 0.35, step: 0.01 },  // share of a cell the cut's inner corners wander, so pieces differ in shape
   jigsaw_min: { value: 0.18, min: 0, max: 0.6, step: 0.02 },    // share of a cell's area below which a sliver of picture joins its neighbour
   time_scale: { value: 1, min: 0.5, max: 2, step: 0.05 },        // x: every level's time is its OBJECTS time times this
   warn_time: { value: 10, min: 0, max: 30, step: 1 },            // s left when the clock turns red and ticks
   hint_cost: { value: 5, min: 0, max: 30, step: 1 },             // s taken off the clock per hint
+  freeze_time: { value: 8, min: 2, max: 20, step: 1 },            // s the freeze booster stops the clock
+  freeze_uses: { value: 1, min: 0, max: 5, step: 1 },             // freezes each level starts with
   intro_hold: { value: 2.5, min: 0, max: 6, step: 0.5 },         // s the clock waits while a tip for a new thing is shown
   star3: { value: 0.45, min: 0.1, max: 0.9, step: 0.05 },        // share of the time left for 3 stars
   star2: { value: 0.2, min: 0, max: 0.8, step: 0.05 },           // share of the time left for 2 stars

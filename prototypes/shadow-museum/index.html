@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- PROTOTYPE - NOT FOR PRODUCTION -->
 <!-- Question: Kéo từng bộ phận của vật thể vào bóng đen cho nó hiện ra có đủ vui để làm hết 6 vật không? -->
-<!-- Date: 2026-11-16 -->
+<!-- Date: 2026-11-17 -->
 <html lang="vi">
 <head>
 <meta charset="utf-8">
@@ -10,12 +10,15 @@
 <style>
   html, body { margin: 0; height: 100%; background: #2a2330; overflow: hidden; touch-action: none; }
   body { font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }
-  canvas { display: block; margin: 0 auto; touch-action: none; }
+  #wrap { position: relative; margin: 0 auto; }
+  #wrap canvas { position: absolute; left: 0; top: 0; display: block; touch-action: none; }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
+<div id="wrap"><canvas id="gl"></canvas><canvas id="game"></canvas></div>
+<script src="vendor/three.js"></script>
 <script src="config.js"></script>
+<script src="world.js"></script>
 <script>
 'use strict';
 // Shadow Museum: drag each object's parts into its black shadow until the object shows.
@@ -30,10 +33,10 @@ const FONT = '"Segoe UI", system-ui, sans-serif';
 const TITLE = 'Shadow Museum';
 const CONTROLS = [
   'Chạm một bóng đen để mở',
-  'Kéo từng mảnh vào đúng chỗ trong bóng',
+  'Kéo mảnh từ khay vào đúng chỗ, vuốt khay để cuộn',
   'Ghép đủ trước khi hết giờ để vật hiện ra',
   'Phím: mũi tên di chuyển · Enter mở · Q/E chọn mảnh',
-  'Space đặt · H gợi ý · M tắt tiếng',
+  'Space đặt · H nam châm · F đóng băng · M tắt tiếng',
 ];
 const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 };
 const CHEAP = params.get('render') === 'cheap';
@@ -49,14 +52,16 @@ const events = [];
 // ---- Screen ---------------------------------------------------------------------------
 const canvas = document.getElementById('game');
 let ctx = canvas.getContext('2d');
-function fit() {
-  const k = Math.min(innerWidth / W, innerHeight / H), r = k * (devicePixelRatio || 1);
+const glCanvas = document.getElementById('gl'), wrap = document.getElementById('wrap');
+function fit() { // the 3D canvas underneath and the HUD canvas on top share one box
+  const k = Math.min(innerWidth / W, innerHeight / H), r = k * (devicePixelRatio || 1), cw = Math.round(W * k), ch = Math.round(H * k);
   canvas.width = Math.round(W * r); canvas.height = Math.round(H * r);
-  canvas.style.width = Math.round(W * k) + 'px'; canvas.style.height = Math.round(H * k) + 'px';
-  canvas.style.marginTop = Math.max(0, Math.floor((innerHeight - H * k) / 2)) + 'px';
+  for (const c of [canvas, glCanvas]) { c.style.width = cw + 'px'; c.style.height = ch + 'px'; }
+  wrap.style.width = cw + 'px'; wrap.style.height = ch + 'px'; wrap.style.top = Math.max(0, Math.floor((innerHeight - ch) / 2)) + 'px';
   ctx.setTransform(r, 0, 0, r, 0, 0); ctx.imageSmoothingEnabled = true;
+  G3.resize(cw, ch);
 }
-addEventListener('resize', fit); fit();
+addEventListener('resize', fit);
 function clear(c) { ctx.fillStyle = c; ctx.fillRect(0, 0, W, H); }
 function text(s, x, y, size, c, align = 'center', weight = '700') {
   ctx.fillStyle = c; ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align;
@@ -107,6 +112,8 @@ const sfx = {
   tick: () => tone(1200, 0.04, 'square', 0.06),
   fail: () => [392, 330, 262, 196].forEach((f, i) => tone(f, 0.3, 'triangle', 0.18, i * 0.12)),
   open: () => [392, 523, 659, 784, 659, 784, 1047].forEach((f, i) => tone(f, 0.35, 'sine', 0.15, i * 0.12)),
+  freeze: () => [1568, 1319, 1175, 1568, 2093].forEach((f, i) => tone(f, 0.25, 'sine', 0.09, i * 0.05)),
+  magnet: () => { tone(220, 0.3, 'sawtooth', 0.05); tone(330, 0.3, 'triangle', 0.12, 0.05); tone(660, 0.2, 'sine', 0.12, 0.25); },
 };
 
 // ---- Drawing helpers ------------------------------------------------------------------------
@@ -124,6 +131,7 @@ function drawStar(x, y, r, c) {
   ctx.beginPath(); for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, q = k % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * q, y + Math.sin(a) * q); }
   ctx.closePath(); ctx.fillStyle = c; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
 }
+function poly(pts, fill) { ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); }
 function sparkle(x, y, r, a) {
   ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = '#fff6d0';
   ctx.beginPath(); ctx.moveTo(x, y - r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.quadraticCurveTo(x, y, x, y + r); ctx.quadraticCurveTo(x, y, x - r, y); ctx.quadraticCurveTo(x, y, x, y - r); ctx.fill(); ctx.restore();
@@ -757,15 +765,14 @@ function hollow(sil) { // the shadow as a hollow pressed into the board: dark li
   g.drawImage(sil, 0, 0); g.globalAlpha = 0.85; g.drawImage(rimOf(sil, 6, 8, '#000000'), 0, 0);
   g.globalAlpha = 0.22; g.drawImage(rimOf(sil, -4, -5, '#ffe7c4'), 0, 0); return c;
 }
-function buildArt(i) { // an object picture, its cut pieces, shadow, hollow and thick version
+function buildArt(i) { // an object picture, its cut pieces and its shadow (world.js makes them 3D)
   const o = OBJECTS[i], keep = seed;
   const layers = buildParts(o);
   const img = makeCanvas(ART_N, ART_N), g = img.getContext('2d', { willReadFrequently: true }); for (const p of layers) g.drawImage(p.cv, p.x, p.y); // cuts read it back
   seed = (Number(params.get('seed')) || CONFIG.seed) * 31 + i; // the cut is the same every time for a seed
   const parts = o.cut === 'shapes' ? cutPicture(img, o) : layers;
-  for (const p of parts) p.tc = thicken(p.cv, tune.piece_depth);
   const sil = makeCanvas(ART_N, ART_N), s = sil.getContext('2d'); s.drawImage(img, 0, 0); s.globalCompositeOperation = 'source-in'; s.fillStyle = '#0d0a10'; s.fillRect(0, 0, ART_N, ART_N);
-  const out = { parts, img, sil, hole: hollow(sil), thick: thicken(img, tune.piece_depth) };
+  const out = { parts, img, sil };
   seed = keep; // building art mid-game leaves the game's own random sequence as it was
   return out;
 }
@@ -773,9 +780,13 @@ function buildArt(i) { // an object picture, its cut pieces, shadow, hollow and 
 const ARTS = new Proxy([], { get: (t, k) => (typeof k === 'string' && /^[0-9]+$/.test(k)) ? (t[k] || (t[k] = buildArt(Number(k)))) : t[k] });
 
 // ---- A puzzle: the object's own parts, plus decoys from other objects, shuffled into the tray ----
-const BOARD = { x: 60, y: 175, s: 600 };
-const BS = BOARD.s / ART_N; // art units to board pixels
-const TRAY = { x: 20, y: 800, w: 680, h: 430 };
+// Board space: the shadow board, BOARD.s across, the object art at BS board units per art px. world.js
+// lays it on a 3D table; BOARD3 says where its centre sits on the screen and how wide the table looks.
+const BOARD = { s: 600 };
+const BS = BOARD.s / ART_N; // art units to board units
+const BOARD3 = { cy: 590, width: 690 };
+// The tray: a row of TRAY3.n slots across the foot of the screen that scrolls when there are more pieces.
+const TRAY3 = { cx: 360, cy: 1158, pitch: 128, n: 5, h: 150, depth: 420 };
 function buildPuzzle(i) {
   const pieces = ARTS[i].parts.map((part, k) => ({ id: k, obj: i, part, decoy: false, placed: false }));
   for (let d = 0; d < OBJECTS[i].decoys; d++) { // a part of another object: it belongs nowhere here
@@ -794,25 +805,27 @@ function reset() {
   seed = Number(params.get('seed')) || CONFIG.seed;
   state = { t: 0, score: 0, gained: '', done: OBJECTS.map(() => false), view: 'hub', sel: 0, cur: null, hints: 0, misses: 0, fails: 0, visitors: [], openAt: null, kbHub: false,
     area: Math.max(0, Math.min(AREAS.length - 1, (Number(params.get('area')) || 1) - 1)), areaAt: null,
-    tut: { hub: true, first: true, hint: true, shapes: true, fail: true } }; // tips not yet shown
+    hubAt: 0,
+    tut: { hub: true, first: true, hint: true, freeze: true, shapes: true, fail: true } }; // tips not yet shown
   state.puzzles = []; // built when a level is first opened
   for (let i = 0; i < areaStart(state.area); i++) state.done[i] = true; // ?area= starts at a later scene with the ones before it finished
-  if (state.area > 0) { state.tut.hub = state.tut.first = state.tut.hint = false; }
+  if (state.area > 0) { state.tut.hub = state.tut.first = state.tut.hint = state.tut.freeze = false; }
   if (params.get('obj')) openObject(Math.max(0, Math.min(OBJECTS.length - 1, Number(params.get('obj')) - 1)));
 }
 const levelTime = i => OBJECTS[i].time * tune.time_scale;
 function openObject(i) {
   const pz = state.puzzles[i] || (state.puzzles[i] = buildPuzzle(i));
   pz.pieces.forEach(p => { p.placed = false; });
-  state.cur = { i, pz, wonAt: null, failAt: null, drag: null, sel: 0, kb: false, cursor: { x: BOARD.x + BOARD.s / 2, y: BOARD.y + BOARD.s / 2 }, wrongAt: -9, hints: 0, t: 0,
-    timeLeft: levelTime(i), hold: 0, lastTick: 99, tip: null, waitFirst: false };
+  state.cur = { i, pz, wonAt: null, failAt: null, drag: null, sel: 0, kb: false, cursor: { x: BOARD.s / 2, y: BOARD.s / 2 }, wrongAt: -9, hints: 0, t: 0,
+    timeLeft: levelTime(i), hold: 0, lastTick: 99, tip: null, waitFirst: false, scroll: 0, freezes: tune.freeze_uses, freezeLeft: 0 };
+  pz.pieces.forEach(p => { p.hinted = false; });
   const cur = state.cur, T = state.tut;
   // tips, each once: how to drag (the clock waits for the first piece), the hint button, cut-up objects
   if (T.first) { cur.waitFirst = true; cur.tip = { kind: 'drag' }; }
   else if (T.hint && i >= 1) { T.hint = false; cur.hold = tune.intro_hold + 1; cur.tip = { kind: 'hint', until: tune.intro_hold + 1 }; }
+  else if (T.freeze && i >= 2) { T.freeze = false; cur.hold = tune.intro_hold + 1; cur.tip = { kind: 'freeze', until: tune.intro_hold + 1 }; }
   else if (T.shapes && OBJECTS[i].cut === 'shapes') { T.shapes = false; cur.hold = tune.intro_hold; cur.tip = { kind: 'shapes', until: tune.intro_hold }; }
   T.hub = false;
-  cur.tray = trayLayout(pz.pieces);
   state.view = 'puzzle';
   events.push({ e: 'open', i });
 }
@@ -821,6 +834,7 @@ function runClock(dt) {
   const cur = state.cur; if (!cur || cur.wonAt !== null || cur.failAt !== null) return;
   if (cur.waitFirst) return;
   if (cur.hold > 0) { cur.hold -= dt; return; }
+  if (cur.freezeLeft > 0) { cur.freezeLeft = Math.max(0, cur.freezeLeft - dt); return; } // frozen: the clock stands still
   cur.timeLeft -= dt;
   const sec = Math.ceil(cur.timeLeft);
   if (sec <= tune.warn_time && sec < cur.lastTick && sec > 0) sfx.tick();
@@ -832,26 +846,11 @@ function failObject() {
   cur.firstFail = state.tut.fail; state.tut.fail = false;
   events.push({ e: 'fail', i: cur.i });
 }
-function trayLayout(pieces) { // one card per piece, all the same size
-  const n = pieces.length, fit = per => Math.min(tune.tray_card_max, (TRAY.w - 24) / per, (TRAY.h - 60) / Math.ceil(n / per));
-  let per = 1; for (let k = 2; k <= n; k++) if (fit(k) > fit(per) + 0.5) per = k; // as many across as gives the biggest cards
-  const rows = Math.ceil(n / per), slot = fit(per);
-  const slots = [];
-  for (let k = 0; k < n; k++) {
-    const row = Math.floor(k / per), inRow = Math.min(per, n - row * per), col = k % per;
-    slots.push({ x: TRAY.x + (TRAY.w - inRow * slot) / 2 + col * slot, y: TRAY.y + 40 + (TRAY.h - 60 - rows * slot) / 2 + row * slot, s: slot });
-  }
-  return { slots };
-}
-function trayPos(p, tl) { // the part shrunk (or grown a little) to fit its card
-  const sl = tl.slots[p.slot], tw = p.part.tc.width, th = p.part.tc.height, room = sl.s - 34, sc = Math.min(room / tw, room / th, BS * tune.thumb_zoom_max);
-  return { x: sl.x + (sl.s - tw * sc) / 2, y: sl.y + (sl.s - th * sc) / 2, sc };
-}
 const unplaced = () => state.cur.pz.pieces.filter(p => !p.placed).sort((a, b) => a.slot - b.slot);
 function placedCount() { return state.cur.pz.pieces.filter(p => p.placed && !p.decoy).length; }
 const realCount = () => state.cur.pz.pieces.filter(p => !p.decoy).length;
-const homeOf = p => ({ x: BOARD.x + p.part.x * BS, y: BOARD.y + p.part.y * BS }); // where the part belongs on the board
-function tryDrop(p, x, y) { // x, y: the part's top-left corner on the screen
+const homeOf = p => ({ x: p.part.x * BS, y: p.part.y * BS }); // where the part belongs, in board space
+function tryDrop(p, x, y) { // x, y: the part's top-left corner in board space
   const cur = state.cur, h = homeOf(p);
   if (!p.decoy && Math.hypot(x - h.x, y - h.y) <= tune.snap_dist) {
     p.placed = true; p.placedAt = cur.t; sfx.place(); events.push({ e: 'place', id: p.id });
@@ -865,17 +864,22 @@ function winObject() {
   const cur = state.cur; cur.wonAt = cur.t; state.done[cur.i] = true; state.score++; sfx.win();
   events.push({ e: 'won', i: cur.i });
 }
-function useHint() { // places one piece for you, and costs time
+function useHint() { // the magnet: pulls one piece into place for you, and costs time
   const cur = state.cur; if (cur.wonAt !== null || cur.failAt !== null) return;
   const p = cur.pz.pieces.find(q => !q.placed && !q.decoy); if (!p) return;
   if (cur.drag && cur.drag.p === p) cur.drag = null;
   cur.hints++; state.hints++;
   if (!cur.waitFirst) cur.timeLeft = Math.max(1, cur.timeLeft - tune.hint_cost);
+  p.hinted = true; sfx.magnet();
   const h = homeOf(p); tryDrop(p, h.x, h.y);
+}
+function useFreeze() { // stops the clock for a while, a few times a level
+  const cur = state.cur; if (cur.wonAt !== null || cur.failAt !== null || cur.freezes <= 0 || cur.freezeLeft > 0) return;
+  cur.freezes--; cur.freezeLeft = tune.freeze_time; sfx.freeze(); events.push({ e: 'freeze' });
 }
 function backToHub() {
   if (state.cur && state.cur.wonAt !== null) state.pop = { i: state.cur.i, t: state.t }; // the finished object pops into its place in the hall
-  state.view = 'hub'; state.cur = null;
+  state.view = 'hub'; state.cur = null; state.hubAt = state.t;
   if (areaObjects(state.area).every(i => state.done[i]) && state.openAt === null) {
     state.openAt = state.t; sfx.open(); state.gained = AREAS[state.area].done;
     state.visitors = [];
@@ -883,468 +887,148 @@ function backToHub() {
   }
 }
 
-// ---- Buttons -------------------------------------------------------------------------------------
-const BTN = { back: { x: 26, y: 28, w: 80, h: 76 }, hint: { x: 614, y: 28, w: 80, h: 76 }, mute: { x: 614, y: 28, w: 80, h: 76 },
-  start: { x: 185, y: 1090, w: 350, h: 100 }, cont: { x: 160, y: 1100, w: 400, h: 96 }, play: { x: 160, y: 1150, w: 400, h: 96 },
-  retry: { x: 160, y: 1010, w: 400, h: 96 }, hub: { x: 160, y: 1124, w: 400, h: 86 } };
+// ---- Buttons and HUD drawing --------------------------------------------------------------------
+// The world is 3D (world.js, on the canvas underneath); everything flat on top of it is drawn here.
+const BTN = { back: { x: 24, y: 26, w: 88, h: 88 }, mute: { x: 608, y: 26, w: 88, h: 88 },
+  freeze: { x: 34, y: 928, w: 112, h: 112 }, magnet: { x: 574, y: 928, w: 112, h: 112 },
+  start: { x: 160, y: 1080, w: 400, h: 110 }, cont: { x: 160, y: 1112, w: 400, h: 100 }, play: { x: 160, y: 1146, w: 400, h: 104 },
+  retry: { x: 160, y: 1004, w: 400, h: 100 }, hub: { x: 160, y: 1124, w: 400, h: 88 } };
+const ui = { press: null, marks: {} }; // how the screen looks only: a pressed button, where hub objects are drawn
+function tapFx(key) { ui.press = { key, t: clock.now() }; }
+function pressK(key) { if (!ui.press || ui.press.key !== key) return 1; const u = (clock.now() - ui.press.t) / 0.22; return u >= 1 ? 1 : 1 - 0.12 * Math.sin(u * Math.PI); }
 function goNextArea() { // the scene is finished: on to the next one, or play it all again after the last
   if (state.area + 1 >= AREAS.length) { reset(); return; }
-  state.area++; state.areaAt = state.t; state.openAt = null; state.visitors = []; state.pop = null; state.sel = 0;
+  state.area++; state.areaAt = state.t; state.hubAt = state.t; state.openAt = null; state.visitors = []; state.pop = null; state.sel = 0;
   events.push({ e: 'area', a: state.area });
 }
 const inBtn = (b, p) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
-function drawButton(b, label, c, size = 36) {
-  fillRR(b.x, b.y + 6, b.w, b.h, b.h / 2, 'rgba(0,0,0,0.25)'); fillRR(b.x, b.y, b.w, b.h, b.h / 2, c); strokeRR(b.x, b.y, b.w, b.h, b.h / 2, C.line, 3);
-  text(label, b.x + b.w / 2, b.y + b.h / 2 + 1, size, C.ink, 'center', '800');
+const PAL = { blue: ['#6cc0ff', '#2f84e6', '#1b58ad'], green: ['#97e872', '#4fba48', '#2c8436'], gold: ['#ffe07a', '#f6ac35', '#c2731a'], red: ['#ff9384', '#e5554c', '#a3302c'],
+  cream: ['#fffaf0', '#f0dfc2', '#b39a76'], purple: ['#bf9dff', '#8a5be6', '#5a35ab'], ice: ['#e3f7ff', '#86d4ff', '#3a8ad0'] };
+const easeOutBack = u => { const c = 1.9; u = Math.min(1, Math.max(0, u)); return 1 + (c + 1) * Math.pow(u - 1, 3) + c * Math.pow(u - 1, 2); };
+const easeOut = u => 1 - Math.pow(1 - Math.min(1, Math.max(0, u)), 3);
+function scaleAbout(cx, cy, k) { ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy); }
+function glossy(x, y, w, h, r, pal) { // a chunky candy shape: a dark lip under, a bright face, a shine on top
+  fillRR(x, y + 9, w, h, r, 'rgba(25,12,45,0.32)');
+  fillRR(x, y + 5, w, h, r, pal[2]);
+  fillRR(x, y, w, h, r, lin(ctx, 0, y, 0, y + h, [[0, pal[0]], [1, pal[1]]]));
+  ctx.save(); rr(ctx, x + 7, y + 5, w - 14, h * 0.42, Math.max(4, r - 7)); ctx.fillStyle = 'rgba(255,255,255,0.33)'; ctx.fill(); ctx.restore();
+  strokeRR(x, y, w, h, r, 'rgba(255,255,255,0.92)', 4);
 }
-function drawIconBtn(b, kind) {
-  fillRR(b.x, b.y + 5, b.w, b.h, 22, 'rgba(0,0,0,0.25)'); fillRR(b.x, b.y, b.w, b.h, 22, C.cream); strokeRR(b.x, b.y, b.w, b.h, 22, C.line, 3);
-  const cx = b.x + b.w / 2, cy = b.y + b.h / 2; ctx.fillStyle = C.ink; ctx.strokeStyle = C.ink; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  if (kind === 'back') {
-    ctx.beginPath(); ctx.moveTo(cx - 18, cy + 2); ctx.lineTo(cx, cy - 16); ctx.lineTo(cx + 18, cy + 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx - 13, cy - 2); ctx.lineTo(cx - 13, cy + 18); ctx.lineTo(cx + 13, cy + 18); ctx.lineTo(cx + 13, cy - 2); ctx.stroke();
-  } else if (kind === 'hint') {
-    ctx.beginPath(); ctx.arc(cx, cy - 6, 15, Math.PI * 0.8, Math.PI * 2.2); ctx.fillStyle = C.gold; ctx.fill(); ctx.lineWidth = 4; ctx.stroke();
-    fillRR(cx - 8, cy + 8, 16, 11, 3, C.inkSoft); ctx.beginPath(); ctx.moveTo(cx - 5, cy + 24); ctx.lineTo(cx + 5, cy + 24); ctx.stroke();
-  } else {
-    ctx.beginPath(); ctx.moveTo(cx - 20, cy - 8); ctx.lineTo(cx - 10, cy - 8); ctx.lineTo(cx + 2, cy - 18); ctx.lineTo(cx + 2, cy + 18); ctx.lineTo(cx - 10, cy + 8); ctx.lineTo(cx - 20, cy + 8); ctx.closePath(); ctx.fill();
-    ctx.lineWidth = 4;
-    if (muted) { ctx.beginPath(); ctx.moveTo(cx + 10, cy - 10); ctx.lineTo(cx + 24, cy + 10); ctx.moveTo(cx + 24, cy - 10); ctx.lineTo(cx + 10, cy + 10); ctx.stroke(); }
-    else { ctx.beginPath(); ctx.arc(cx + 4, cy, 12, -0.8, 0.8); ctx.stroke(); ctx.beginPath(); ctx.arc(cx + 4, cy, 21, -0.8, 0.8); ctx.stroke(); }
-  }
+function outText(s, x, y, size, fill, edge = '#3a2357', weight = '900', align = 'center') {
+  ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(3, size * 0.2); ctx.strokeStyle = edge; ctx.strokeText(s, x, y); ctx.fillStyle = fill; ctx.fillText(s, x, y);
 }
-
-// ---- The museum hall: one big picture that fills up as objects are finished ---------------------
-// The room is drawn in one-point perspective: a back wall, two side walls and a ceiling running
-// towards the vanishing point VP, a checked floor, light from the tall window in the middle.
-// Each object has its own place in the hall: centre x, the top of its stand y, picture size s.
-const SPOTS_MUSEUM = [
-  { x: 190, y: 470, s: 150, stand: 'niche' },
-  { x: 530, y: 470, s: 150, stand: 'niche' },
-  { x: 150, y: 800, s: 210, stand: 'plinth' },
-  { x: 570, y: 800, s: 210, stand: 'plinth' },
-  { x: 360, y: 610, s: 170, stand: 'case' },
-  { x: 360, y: 1030, s: 250, stand: 'plinth' },
-];
-const FLOOR_Y = 690, VP = { x: 360, y: FLOOR_Y - 520 }; // where the back wall meets the floor; the vanishing point
-const BACK = { x0: 110, x1: 610, y0: 110 };            // the back wall
-const floorX = (bx, y) => VP.x + (bx - VP.x) * (y - VP.y) / (H - VP.y); // a floor line that meets the bottom edge at bx
-const sideY = (yb, xb, x) => VP.y + (yb - VP.y) * (x - VP.x) / (xb - VP.x); // a line from VP through (xb, yb) at x
-function poly(pts, fill) { ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); }
-function softShadow(x, y, rx, ry, a) { // a blurred oval shadow on the floor
-  ctx.save(); ctx.translate(x, y); ctx.scale(1, ry / rx);
-  ctx.fillStyle = rad(ctx, 0, 0, rx * 0.15, rx, [[0, `rgba(40,25,15,${a})`], [1, 'rgba(40,25,15,0)']]);
-  ctx.beginPath(); ctx.arc(0, 0, rx, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-}
-function drawPlant(x, y, s) {
-  softShadow(x + 6 * s, y + 4 * s, 46 * s, 12 * s, 0.4);
-  poly([[x - 26 * s, y - 40 * s], [x + 26 * s, y - 40 * s], [x + 19 * s, y], [x - 19 * s, y]], lin(ctx, x - 26 * s, 0, x + 26 * s, 0, [[0, '#8a4424'], [0.35, '#e08a55'], [1, '#7a3a1c']]));
-  ellipse(ctx, x, y - 40 * s, 26 * s, 6 * s, 0, '#5a3020');
-  const leaves = ['#3f7a40', '#6fae5f', '#4f8f4c', '#8cc47a'];
-  for (let k = 0; k < 11; k++) { const a = -Math.PI / 2 + (k - 5) * 0.27; ellipse(ctx, x + Math.cos(a) * 40 * s, y - 44 * s + Math.sin(a) * 52 * s, 30 * s, 10 * s, a, leaves[k % 4]); }
-}
-function drawGarland(x0, x1, y, sag) {
-  ctx.beginPath(); ctx.moveTo(x0, y); ctx.quadraticCurveTo((x0 + x1) / 2, y + sag * 2, x1, y); stroke(ctx, 'rgba(40,25,15,0.25)', 12);
-  ctx.beginPath(); ctx.moveTo(x0, y - 3); ctx.quadraticCurveTo((x0 + x1) / 2, y - 3 + sag * 2, x1, y - 3); stroke(ctx, '#5e9a58', 12);
-  for (let k = 1; k < 6; k++) { const t = k / 6, px = x0 + (x1 - x0) * t, py = y - 3 + sag * 2 * 2 * t * (1 - t); ellipse(ctx, px, py, 7, 7, 0, ['#e0574f', '#f2cf62', '#f4a3b8'][k % 3]); ellipse(ctx, px - 2, py - 2, 2.5, 2.5, 0, 'rgba(255,255,255,0.6)'); }
-}
-function drawBanner(x, y, c) {
-  poly([[x - 26, y + 6], [x + 32, y + 6], [x + 32, y + 126], [x + 3, y + 106], [x - 26, y + 126]], 'rgba(40,25,15,0.25)');
-  poly([[x - 28, y], [x + 28, y], [x + 28, y + 120], [x, y + 100], [x - 28, y + 120]], lin(ctx, x - 28, 0, x + 28, 0, [[0, c], [0.5, '#ffffff22'], [1, c]]));
-  poly([[x - 28, y], [x + 28, y], [x + 28, y + 120], [x, y + 100], [x - 28, y + 120]], lin(ctx, x - 28, 0, x + 28, 0, [[0, 'rgba(0,0,0,0.25)'], [0.45, 'rgba(255,255,255,0.12)'], [1, 'rgba(0,0,0,0.3)']]));
-  fillRR(x - 34, y - 6, 68, 9, 4, C.gold); drawStar(x, y + 46, 14, C.gold);
-}
-function drawPilaster(x, y0, y1) { // a round column standing in a corner
-  ctx.fillStyle = lin(ctx, x - 16, 0, x + 16, 0, [[0, '#b39d7c'], [0.3, '#fbf3e6'], [0.65, '#e3d3b8'], [1, '#9c8566']]); ctx.fillRect(x - 16, y0, 32, y1 - y0);
-  for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(x + k * 6, y0 + 30); ctx.lineTo(x + k * 6, y1 - 30); stroke(ctx, 'rgba(120,95,65,0.22)', 2); }
-  fillRR(x - 24, y0, 48, 22, 4, lin(ctx, x - 24, 0, x + 24, 0, [[0, '#c9b28e'], [0.4, '#fff8ea'], [1, '#a88f6c']]));
-  fillRR(x - 24, y1 - 22, 48, 22, 4, lin(ctx, x - 24, 0, x + 24, 0, [[0, '#c9b28e'], [0.4, '#fff8ea'], [1, '#a88f6c']]));
-}
-function drawNiche(nx) { // an arched recess with a shelf; its inner sides show, the back is set in towards VP
-  const hw = 72, top = 300, dir = Math.sign(VP.x - nx);
-  const arch = (cx, w, t, b) => { ctx.beginPath(); ctx.moveTo(cx - w, b); ctx.lineTo(cx - w, t); ctx.arc(cx, t, w, Math.PI, 0); ctx.lineTo(cx + w, b); ctx.closePath(); };
-  arch(nx, hw + 8, top, 480); ctx.fillStyle = '#bfa47c'; ctx.fill(); // frame
-  arch(nx, hw, top, 480); ctx.fillStyle = lin(ctx, nx - hw, 0, nx + hw, 0, dir > 0 ? [[0, '#ead6b2'], [1, '#c7a985']] : [[0, '#c7a985'], [1, '#ead6b2']]); ctx.fill(); // inner sides
-  arch(nx + dir * 12, hw * 0.8, top + 6, 480); ctx.fillStyle = lin(ctx, 0, top - hw, 0, 480, [[0, '#9c7f5a'], [0.4, '#c4a67f'], [1, '#d9c09a']]); ctx.fill(); // back, deeper and darker
-  ctx.save(); arch(nx, hw, top, 480); ctx.clip(); ctx.fillStyle = lin(ctx, 0, top - hw, 0, top + 60, [[0, 'rgba(60,40,20,0.45)'], [1, 'rgba(60,40,20,0)']]); ctx.fillRect(nx - hw, top - hw, hw * 2, 140); ctx.restore(); // shade under the arch
-  poly([[nx - hw - 14, 470], [nx + hw + 14, 470], [nx + hw + 2 + dir * 8, 458], [nx - hw - 2 + dir * 8, 458]], '#efe0c2'); // shelf top
-  fillRR(nx - hw - 14, 470, (hw + 14) * 2, 16, 3, lin(ctx, 0, 470, 0, 486, [[0, '#d8c19c'], [1, '#a8865c']])); // shelf front
-  ctx.fillStyle = lin(ctx, 0, 486, 0, 520, [[0, 'rgba(60,40,20,0.3)'], [1, 'rgba(60,40,20,0)']]); ctx.fillRect(nx - hw - 14, 486, (hw + 14) * 2, 34);
-}
-function sidePainting(left) { // a framed picture hung on a side wall, drawn in perspective
-  const xb = left ? BACK.x0 : BACK.x1, xa = left ? 18 : W - 18, xc = left ? 92 : W - 92;
-  const q = (yb) => [[xa, sideY(yb, xb, xa)], [xc, sideY(yb, xb, xc)]];
-  const [t0, t1] = q(300), [b0, b1] = q(450);
-  poly([t0, t1, b1, b0], '#c99a3a');
-  const inset = (p, qq, k) => [p[0] + (qq[0] - p[0]) * k, p[1] + (qq[1] - p[1]) * k];
-  const i0 = inset(t0, b1, 0.1), i1 = inset(t1, b0, 0.1), i2 = inset(b1, t0, 0.1), i3 = inset(b0, t1, 0.1);
-  poly([i0, i1, i2, i3], lin(ctx, 0, Math.min(i0[1], i1[1]), 0, Math.max(i2[1], i3[1]), [[0, '#9fd2ee'], [0.55, '#e8d8a8'], [0.56, '#7fae6a'], [1, '#4f8a4c']]));
-}
-function drawHallStatic(n) { // everything that only changes when an object is finished
-  const { x0, x1, y0 } = BACK, wtop = FLOOR_Y - 110;
-  // back wall, with a little haze so it sits further back
-  ctx.fillStyle = lin(ctx, 0, y0, 0, FLOOR_Y, [[0, '#d9c19c'], [0.5, '#f1e2c6'], [1, '#e8d5b3']]); ctx.fillRect(x0, y0, x1 - x0, FLOOR_Y - y0);
-  // the window in the middle
-  ctx.beginPath(); ctx.moveTo(300, 560); ctx.lineTo(300, 250); ctx.arc(360, 250, 60, Math.PI, 0); ctx.lineTo(420, 560); ctx.closePath();
-  ctx.fillStyle = lin(ctx, 0, 190, 0, 560, [[0, '#7fc2ea'], [0.7, '#cfe9f5'], [1, '#fff6e0']]); ctx.fill(); ctx.strokeStyle = '#9a7650'; ctx.lineWidth = 12; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(360, 190); ctx.lineTo(360, 560); ctx.moveTo(300, 330); ctx.lineTo(420, 330); ctx.moveTo(300, 450); ctx.lineTo(420, 450); stroke(ctx, '#9a7650', 5);
-  poly([[292, 560], [428, 560], [436, 574], [284, 574]], '#d8c19c');
-  for (const nx of [SPOTS_MUSEUM[0].x, SPOTS_MUSEUM[1].x]) drawNiche(nx);
-  // wainscot on the back wall
-  ctx.fillStyle = lin(ctx, 0, wtop, 0, FLOOR_Y, [[0, '#b98d60'], [1, '#93683f']]); ctx.fillRect(x0, wtop, x1 - x0, 110);
-  ctx.fillStyle = '#7f5a36'; ctx.fillRect(x0, wtop - 6, x1 - x0, 8);
-  for (let x = x0 + 14; x < x1 - 60; x += 100) { fillRR(x, wtop + 14, 84, 80, 6, 'rgba(70,40,20,0.18)'); strokeRR(x + 1, wtop + 15, 84, 80, 6, 'rgba(255,235,200,0.25)', 2); }
-  // checked floor in perspective, darker far away, and the red carpet up the middle
-  const rows = 10, ys = []; for (let k = 0; k <= rows; k++) ys.push(FLOOR_Y + (H - FLOOR_Y) * Math.pow(k / rows, 1.5));
-  for (let r = 0; r < rows; r++) for (let j = -14; j < 22; j++) {
-    const b0 = j * 80 - 120, b1 = b0 + 80, ya = ys[r], yb = ys[r + 1];
-    poly([[floorX(b0, ya), ya], [floorX(b1, ya), ya], [floorX(b1, yb), yb], [floorX(b0, yb), yb]], (r + j) % 2 ? '#cdb08a' : '#f3e6cc');
-  }
-  ctx.fillStyle = lin(ctx, 0, FLOOR_Y, 0, H, [[0, 'rgba(60,40,25,0.35)'], [0.35, 'rgba(60,40,25,0.05)'], [0.7, 'rgba(255,250,240,0.06)'], [1, 'rgba(60,40,25,0.12)']]); ctx.fillRect(0, FLOOR_Y, W, H - FLOOR_Y);
-  poly([[floorX(200, FLOOR_Y), FLOOR_Y], [floorX(520, FLOOR_Y), FLOOR_Y], [520, H], [200, H]], lin(ctx, 0, FLOOR_Y, 0, H, [[0, '#6e1c2a'], [0.5, '#a82e40'], [1, '#c4384b']]));
-  for (const bx of [250, 470]) { ctx.beginPath(); ctx.moveTo(floorX(bx, FLOOR_Y), FLOOR_Y); ctx.lineTo(bx, H); stroke(ctx, 'rgba(255,180,180,0.12)', 18); }
-  for (const bx of [216, 504]) { ctx.beginPath(); ctx.moveTo(floorX(bx, FLOOR_Y), FLOOR_Y); ctx.lineTo(bx, H); stroke(ctx, C.gold, 4); }
-  // side walls and their wainscot, running towards VP
-  for (const left of [true, false]) {
-    const xb = left ? x0 : x1, xe = left ? 0 : W;
-    poly([[xe, 0], [xb, 0], [xb, FLOOR_Y], [xe, sideY(FLOOR_Y, xb, xe)]], lin(ctx, xe, 0, xb, 0, [[0, '#c4a983'], [1, '#e6d2ae']]));
-    poly([[xe, sideY(wtop, xb, xe)], [xb, wtop], [xb, FLOOR_Y], [xe, sideY(FLOOR_Y, xb, xe)]], lin(ctx, xe, 0, xb, 0, [[0, '#7c552f'], [1, '#a77a4c']]));
-    for (let k = 1; k < 4; k++) { const x = xb + (xe - xb) * Math.pow(k / 4, 0.8); ctx.beginPath(); ctx.moveTo(x, sideY(wtop, xb, x) + 10); ctx.lineTo(x, sideY(FLOOR_Y, xb, x) - 10); stroke(ctx, 'rgba(60,35,15,0.35)', 3); }
-    ctx.fillStyle = lin(ctx, xb, 0, xb + (left ? 40 : -40), 0, [[0, 'rgba(60,40,20,0.28)'], [1, 'rgba(60,40,20,0)']]); ctx.fillRect(Math.min(xb, xb + (left ? 40 : -40)), y0, 40, FLOOR_Y - y0); // corner shade on the back wall
-    sidePainting(left);
-  }
-  // ceiling: a coffered band running back
-  poly([[0, 0], [W, 0], [W, sideY(y0, x1, W)], [x1, y0], [x0, y0], [0, sideY(y0, x0, 0)]], lin(ctx, 0, 0, 0, y0, [[0, '#a68a64'], [1, '#d6bf98']]));
-  for (let k = 1; k < 8; k++) { const bx = x0 + (x1 - x0) * k / 8, tx = VP.x + (bx - VP.x) * (0 - VP.y) / (y0 - VP.y); ctx.beginPath(); ctx.moveTo(bx, y0); ctx.lineTo(tx, 0); stroke(ctx, 'rgba(110,80,50,0.35)', 3); }
-  fillRR(x0 - 6, y0 - 8, x1 - x0 + 12, 14, 3, lin(ctx, 0, y0 - 8, 0, y0 + 6, [[0, '#fff3dc'], [1, '#b8996e']]));
-  drawPilaster(x0, y0, FLOOR_Y); drawPilaster(x1, y0, FLOOR_Y);
-  // the side walls over the floor's edges, then the shade where wall meets floor
-  for (const left of [true, false]) {
-    const xb = left ? x0 : x1, xe = left ? 0 : W, yb = sideY(FLOOR_Y, xb, xe);
-    poly([[xb, FLOOR_Y], [xe, yb], [xe, yb + 26], [xb, FLOOR_Y + 12]], 'rgba(60,40,20,0.3)');
-  }
-  ctx.fillStyle = lin(ctx, 0, FLOOR_Y, 0, FLOOR_Y + 36, [[0, 'rgba(60,40,20,0.4)'], [1, 'rgba(60,40,20,0)']]); ctx.fillRect(x0, FLOOR_Y, x1 - x0, 36);
-  // light from the window lying on the floor
-  poly([[300, FLOOR_Y], [420, FLOOR_Y], [585, 1180], [135, 1180]], lin(ctx, 0, FLOOR_Y, 0, 1180, [[0, 'rgba(255,240,200,0.32)'], [1, 'rgba(255,240,200,0)']]));
-  // dressing that comes with progress
-  if (n >= 2) { drawGarland(x0, 360, y0 + 4, 22); drawGarland(360, x1, y0 + 4, 22); }
-  if (n >= 4) { drawBanner(52, 140, '#7e1f33'); drawBanner(W - 52, 140, '#7e1f33'); }
-  if (n >= 3) { drawPlant(258, 706, 0.55); drawPlant(462, 706, 0.55); }
-  if (n >= 1) { drawPlant(62, 1030, 1.15); drawPlant(658, 1030, 1.15); }
-}
-function drawChandelier(lit) {
-  ctx.beginPath(); ctx.moveTo(360, 0); ctx.lineTo(360, 150); stroke(ctx, '#7a5a2a', 4);
-  softShadow(360, 232, 80, 10, 0.12);
-  ctx.beginPath(); ctx.ellipse(360, 196, 92, 22, 0, 0, Math.PI); stroke(ctx, '#8a6a2a', 9);
-  ctx.beginPath(); ctx.ellipse(360, 194, 92, 22, 0, 0, Math.PI); stroke(ctx, '#e2b54a', 5);
-  ellipse(ctx, 360, 168, 26, 30, 0, rad(ctx, 352, 158, 2, 30, [[0, '#fff0b0'], [0.5, '#e2b54a'], [1, '#8a6420']]));
-  for (let k = 0; k < 5; k++) {
-    const x = 280 + k * 40, y = 196 + Math.sin((k / 4) * Math.PI) * 20;
-    fillRR(x - 5, y - 30, 10, 26, 3, lin(ctx, x - 5, 0, x + 5, 0, [[0, '#e8dcc8'], [0.5, '#ffffff'], [1, '#cfc2ac']]));
-    if (lit > 0) { ctx.fillStyle = rad(ctx, x, y - 38, 1, 40, [[0, `rgba(255,220,140,${0.9 * lit})`], [1, 'rgba(255,220,140,0)']]); ctx.fillRect(x - 44, y - 82, 88, 88); }
-    ellipse(ctx, x, y - 36, 4, 8, 0, lit > 0 ? '#ffc85a' : '#d8cbb8');
-  }
-}
-// Layers that rarely change are drawn once into a canvas of the screen's size and copied after.
-const layerCache = new Map();
-function cached(key, draw) {
-  const k = canvas.width / W, id = key + '|' + k.toFixed(3);
-  let c = layerCache.get(id);
-  if (!c) {
-    if (layerCache.size > 16) layerCache.clear();
-    c = makeCanvas(W * k, H * k); const saved = ctx; ctx = c.getContext('2d'); ctx.setTransform(k, 0, 0, k, 0, 0);
-    draw(); ctx = saved; layerCache.set(id, c);
-  }
-  ctx.drawImage(c, 0, 0, W, H);
-}
-function museumLive(lit) { // sunbeams through the window, dust in them, the chandelier
-  // sunbeams through the window, and dust turning in them
-  const beam = 0.1 + 0.12 * lit;
-  poly([[300, 200], [420, 200], [600, 1100], [120, 1100]], lin(ctx, 0, 200, 0, 1100, [[0, `rgba(255,245,215,${beam})`], [1, 'rgba(255,245,215,0)']]));
-  for (let k = 0; k < 14; k++) {
-    const t = state.t * (0.06 + (k % 5) * 0.012) + k * 0.37, y = 260 + ((t * 300) % 760), spread = (y - 200) / 900;
-    const x = 360 + Math.sin(k * 2.3 + state.t * 0.4) * (60 + spread * 200);
-    ctx.globalAlpha = 0.35 + 0.3 * Math.sin(state.t * 2 + k); ellipse(ctx, x, y, 2.2, 2.2, 0, '#fff6dc'); ctx.globalAlpha = 1;
-  }
-  drawChandelier(lit);
-}
-// ---- The cozy kitchen: back counter under a window, an island in front, planks running back ------
-const SPOTS_KITCHEN = [ // teapot, cookie jar, mixer, coffee maker, pie, cake
-  { x: 186, y: 604, s: 150, stand: 'counter' },
-  { x: 200, y: 950, s: 150, stand: 'counter' },
-  { x: 540, y: 604, s: 170, stand: 'counter' },
-  { x: 360, y: 604, s: 170, stand: 'counter' },
-  { x: 360, y: 950, s: 170, stand: 'counter' },
-  { x: 522, y: 950, s: 170, stand: 'counter' },
-];
-const KVP = { x: 360, y: 300 }, KB = { x0: 90, x1: 630, y0: 80, y1: 760 };
-const kSide = (yb, xb, x) => KVP.y + (yb - KVP.y) * (x - KVP.x) / (xb - KVP.x);
-const kFloorX = (bx, y) => KVP.x + (bx - KVP.x) * (y - KVP.y) / (H - KVP.y);
-function gingham(path, x, y, w, h, sz, c) {
-  ctx.save(); ctx.clip(path); ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y, w, h); ctx.fillStyle = c;
-  for (let xx = x; xx < x + w; xx += sz * 2) ctx.fillRect(xx, y, sz, h);
-  for (let yy = y; yy < y + h; yy += sz * 2) ctx.fillRect(x, yy, w, sz);
+function drawButton(b, label, pal, size = 36, key = label, bob = 0) {
+  ctx.save(); scaleAbout(b.x + b.w / 2, b.y + b.h / 2, pressK(key) * (1 + bob));
+  glossy(b.x, b.y, b.w, b.h, b.h / 2, pal); outText(label, b.x + b.w / 2, b.y + b.h / 2 + 1, size, '#ffffff', pal[2]);
   ctx.restore();
 }
-function sage(y0, y1) { return lin(ctx, 0, y0, 0, y1, [[0, '#b7d1b0'], [1, '#86a98a']]); }
-function drawKitchenStatic(n) {
-  const { x0, x1, y0, y1 } = KB;
-  // floor: warm planks running back, darker far away
-  ctx.fillStyle = lin(ctx, 0, y1, 0, H, [[0, '#a8703f'], [1, '#d39a5f']]); ctx.fillRect(0, y1, W, H - y1);
-  const rows = 9, ys = []; for (let r = 0; r <= rows; r++) ys.push(y1 + (H - y1) * Math.pow(r / rows, 1.4));
-  for (let j = -10; j < 20; j++) {
-    const bx = j * 72 - 100; ctx.beginPath(); ctx.moveTo(kFloorX(bx, y1), y1); ctx.lineTo(bx, H); stroke(ctx, 'rgba(80,45,18,0.4)', 3);
-    for (let r = 0; r < rows; r++) if ((j * 5 + r * 3) % 4 === 0) { const y = ys[r]; ctx.beginPath(); ctx.moveTo(kFloorX(bx, y), y); ctx.lineTo(kFloorX(bx + 72, y), y); stroke(ctx, 'rgba(80,45,18,0.3)', 2); }
-  }
-  poly([[300, y1], [440, y1], [540, 900], [180, 900]], lin(ctx, 0, y1, 0, 900, [[0, 'rgba(255,240,200,0.3)'], [1, 'rgba(255,240,200,0)']])); // window light on the floor
-  if (n >= 4) { // a striped rug between counter and island
-    const rug = [[206, 786], [514, 786], [548, 866], [172, 866]];
-    poly(rug, '#e0574f'); for (let k = 1; k < 6; k++) { const t = k / 6; poly([[206 + (172 - 206) * t, 786 + 80 * t], [514 + (548 - 514) * t, 786 + 80 * t], [514 + (548 - 514) * (t + 0.06), 786 + 80 * (t + 0.06)], [206 + (172 - 206) * (t + 0.06), 786 + 80 * (t + 0.06)]], k % 2 ? '#f2cf62' : '#fbf3e6'); }
-  }
-  // back wall, backsplash tiles, window with gingham curtains
-  ctx.fillStyle = lin(ctx, 0, y0, 0, y1, [[0, '#ead9bd'], [1, '#f6ecdb']]); ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-  ctx.fillStyle = '#fbf7ef'; ctx.fillRect(x0, 330, x1 - x0, 260);
-  ctx.strokeStyle = 'rgba(150,130,100,0.35)'; ctx.lineWidth = 2;
-  for (let r = 0; r < 12; r++) { const y = 330 + r * 22; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); for (let x = x0 + (r % 2) * 22; x < x1; x += 44) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 22); ctx.stroke(); } }
-  rr(ctx, 290, 116, 140, 254, 6); ctx.fillStyle = '#fffaf0'; ctx.fill();
-  ctx.fillStyle = lin(ctx, 0, 126, 0, 360, [[0, '#7fc2ea'], [0.75, '#d6eef8'], [0.76, '#8cc47a'], [1, '#5f9a5a']]); ctx.fillRect(302, 128, 116, 230);
-  ellipse(ctx, 340, 312, 34, 26, 0, '#4f8a4c'); ellipse(ctx, 392, 318, 26, 20, 0, '#5f9a5a');
-  ctx.beginPath(); ctx.moveTo(360, 128); ctx.lineTo(360, 358); ctx.moveTo(302, 240); ctx.lineTo(418, 240); stroke(ctx, '#fffaf0', 6);
-  fillRR(278, 362, 164, 16, 4, lin(ctx, 0, 362, 0, 378, [[0, '#ffffff'], [1, '#d8cbb8']]));
-  ctx.beginPath(); ctx.moveTo(274, 112); ctx.lineTo(446, 112); stroke(ctx, '#9a7650', 6);
-  for (const d of [-1, 1]) { const p = new Path2D(), xa = d < 0 ? 286 : 434; p.moveTo(xa, 112); p.lineTo(xa - d * 46, 112); p.quadraticCurveTo(xa - d * 18, 200, xa - d * 26, 290); p.lineTo(xa, 300); p.closePath(); gingham(p, 230, 100, 260, 210, 9, 'rgba(224,56,79,0.55)'); }
-  // upper cabinets with the shade they cast on the tiles
-  ctx.fillStyle = lin(ctx, 0, 320, 0, 350, [[0, 'rgba(70,50,30,0.3)'], [1, 'rgba(70,50,30,0)']]); ctx.fillRect(x0, 320, 200, 30); ctx.fillRect(x1 - 200, 320, 200, 30);
-  for (const x of [x0, x1 - 196]) {
-    rr(ctx, x, 92, 196, 228, 6); ctx.fillStyle = sage(92, 320); ctx.fill();
-    for (const k of [0, 1]) { strokeRR(x + 12 + k * 92, 106, 80, 200, 6, 'rgba(60,90,70,0.45)', 3); strokeRR(x + 14 + k * 92, 108, 80, 200, 6, 'rgba(255,255,255,0.35)', 2); ellipse(ctx, x + (k ? 108 : 86), 270, 5, 5, 0, '#c99a3a'); }
-  }
-  // the back counter: wooden top, front edge, lower cabinets, toe kick
-  poly([[x0, 604], [x1, 604], [x1 - 6, 588], [x0 + 6, 588]], lin(ctx, 0, 588, 0, 604, [[0, '#f0c483'], [1, '#d99a58']]));
-  fillRR(x0 - 4, 600, x1 - x0 + 8, 14, 3, lin(ctx, 0, 600, 0, 614, [[0, '#c4824a'], [1, '#8a5530']]));
-  ctx.fillStyle = sage(614, 760); ctx.fillRect(x0, 614, x1 - x0, 132);
-  for (let x = x0 + 12; x < x1 - 60; x += 90) { strokeRR(x, 626, 78, 108, 6, 'rgba(60,90,70,0.45)', 3); fillRR(x + 30, 640, 18, 6, 3, '#c99a3a'); }
-  ctx.fillStyle = '#4f6a58'; ctx.fillRect(x0, 746, x1 - x0, 14);
-  // side walls: the counters and cupboards carry on towards us
-  for (const left of [true, false]) {
-    const xb = left ? x0 : x1, xe = left ? 0 : W, sy = y => kSide(y, xb, xe);
-    poly([[xe, sy(y0)], [xb, y0], [xb, y1], [xe, sy(y1)]], lin(ctx, xe, 0, xb, 0, [[0, '#dcc6a2'], [1, '#efe1c8']]));
-    poly([[xb, 330], [xe, sy(330)], [xe, sy(588)], [xb, 588]], '#f4efe4');
-    poly([[xb, 96], [xe, sy(96)], [xe, sy(320)], [xb, 320]], lin(ctx, xe, 0, xb, 0, [[0, '#7fa082'], [1, '#a9c7a2']]));
-    poly([[xb, 588], [xe, sy(588)], [xe, sy(614)], [xb, 614]], '#d99a58');
-    poly([[xb, 614], [xe, sy(614)], [xe, sy(760)], [xb, 760]], lin(ctx, xe, 0, xb, 0, [[0, '#6f9276'], [1, '#93b496']]));
-    ctx.fillStyle = lin(ctx, xb, 0, xb + (left ? 30 : -30), 0, [[0, 'rgba(60,40,20,0.25)'], [1, 'rgba(60,40,20,0)']]); ctx.fillRect(Math.min(xb, xb + (left ? 30 : -30)), y0, 30, y1 - y0);
-  }
-  // ceiling
-  poly([[0, 0], [W, 0], [W, kSide(y0, x1, W)], [x1, y0], [x0, y0], [0, kSide(y0, x0, 0)]], lin(ctx, 0, 0, 0, y0, [[0, '#d8c4a2'], [1, '#efe2cc']]));
-  // a clock on the left wall, set in perspective
-  ctx.save(); ctx.translate(46, kSide(440, x0, 46)); ctx.scale(0.62, 1); ellipse(ctx, 0, 0, 26, 26, 0, '#fffaf0'); ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); stroke(ctx, '#c0392b', 5);
-  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -16); ctx.moveTo(0, 0); ctx.lineTo(11, 4); stroke(ctx, '#3d2f2b', 3); ctx.restore();
-  // the island: shadow, top face, front edge, cupboards
-  const ib = (x, t) => [x + (KVP.x - x) * t, 975 + (KVP.y - 975) * t];
-  softShadow(360, 1132, 300, 24, 0.45);
-  poly([[110, 975], [610, 975], ib(610, 0.14), ib(110, 0.14)], lin(ctx, 0, 880, 0, 975, [[0, '#e6b06c'], [1, '#f2c88a']]));
-  for (let k = 1; k < 6; k++) { ctx.beginPath(); ctx.moveTo(110 + k * 83, 975); ctx.lineTo(ib(110 + k * 83, 0.14)[0], ib(110 + k * 83, 0.14)[1]); stroke(ctx, 'rgba(150,90,40,0.18)', 2); }
-  fillRR(104, 971, 512, 16, 3, lin(ctx, 0, 971, 0, 987, [[0, '#c4824a'], [1, '#8a5530']]));
-  ctx.fillStyle = lin(ctx, 0, 987, 0, 1130, [[0, '#7fa58b'], [1, '#5f8a6c']]); ctx.fillRect(112, 987, 496, 143);
-  for (let x = 124; x < 590; x += 122) { strokeRR(x, 1000, 108, 116, 6, 'rgba(40,70,50,0.45)', 3); fillRR(x + 44, 1016, 20, 6, 3, '#c99a3a'); }
-  ctx.fillStyle = lin(ctx, 0, 987, 0, 1010, [[0, 'rgba(40,25,10,0.35)'], [1, 'rgba(40,25,10,0)']]); ctx.fillRect(112, 987, 496, 23);
-  // dressing that comes with progress
-  if (n >= 1) for (const x of [314, 360, 406]) drawPlant(x, 364, 0.32);
-  if (n >= 2) for (let k = 0; k < 3; k++) { const x = 650 + k * 24, y = kSide(380, x1, x) + 14; ctx.beginPath(); ctx.moveTo(x, y - 30); ctx.lineTo(x, y - 8); stroke(ctx, '#7a5a2a', 2); ellipse(ctx, x, y + 4, 12 - k, 14 - k, 0, lin(ctx, x - 12, 0, x + 12, 0, [[0, '#9a4a20'], [0.4, '#f0a060'], [1, '#8a3a18']])); }
-  if (n >= 3) drawGarland(292, 428, 120, 10);
+function drawIconBtn(b, kind, pal = PAL.blue, round = false, dim = false) {
+  ctx.save(); scaleAbout(b.x + b.w / 2, b.y + b.h / 2, pressK(kind)); if (dim) ctx.globalAlpha *= 0.55;
+  glossy(b.x, b.y, b.w, b.h, round ? b.w / 2 : 28, pal); icon(kind, b.x + b.w / 2, b.y + b.h / 2 - 2, b.w * 0.5);
+  ctx.restore();
 }
-function kitchenLive(lit) { // two pendant lamps over the island
-  for (const x of [240, 480]) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 226); stroke(ctx, '#3d2f2b', 3);
-    const glow = 0.12 + 0.2 * lit;
-    poly([[x - 26, 250], [x + 26, 250], [x + 150, 940], [x - 150, 940]], lin(ctx, 0, 250, 0, 940, [[0, `rgba(255,230,170,${glow})`], [1, 'rgba(255,230,170,0)']]));
-    ctx.beginPath(); ctx.moveTo(x - 40, 254); ctx.quadraticCurveTo(x - 36, 220, x, 220); ctx.quadraticCurveTo(x + 36, 220, x + 40, 254); ctx.closePath();
-    ctx.fillStyle = lin(ctx, x - 40, 0, x + 40, 0, [[0, '#2f4a3f'], [0.4, '#6f9a86'], [1, '#22382f']]); ctx.fill();
-    ellipse(ctx, x, 254, 40, 7, 0, '#22382f'); ellipse(ctx, x, 256, 16, 6, 0, lit > 0 ? '#fff6c8' : '#f3e2b0');
+function badge(x, y, label, pal) { ctx.beginPath(); ctx.arc(x, y + 3, 22, 0, 7); ctx.fillStyle = 'rgba(25,12,45,0.3)'; ctx.fill(); ctx.beginPath(); ctx.arc(x, y, 22, 0, 7); ctx.fillStyle = lin(ctx, 0, y - 22, 0, y + 22, [[0, pal[0]], [1, pal[1]]]); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.stroke(); outText(label, x, y + 1, label.length > 2 ? 17 : 22, '#fff', pal[2]); }
+function icon(kind, cx, cy, s) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(s / 44, s / 44); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const edge = 'rgba(25,15,60,0.5)', two = (draw, w) => { draw(); ctx.strokeStyle = edge; ctx.lineWidth = w + 5; ctx.stroke(); ctx.strokeStyle = '#fff'; ctx.lineWidth = w; ctx.stroke(); };
+  if (kind === 'back') { // a house
+    ctx.beginPath(); ctx.moveTo(-21, 0); ctx.lineTo(0, -20); ctx.lineTo(21, 0); ctx.lineTo(15, 0); ctx.lineTo(15, 19); ctx.lineTo(-15, 19); ctx.lineTo(-15, 0); ctx.closePath();
+    ctx.lineWidth = 7; ctx.strokeStyle = edge; ctx.stroke(); ctx.fillStyle = '#fff'; ctx.fill(); fillRR(-5, 6, 10, 13, 3, '#3f86da');
+  } else if (kind === 'mute') {
+    ctx.beginPath(); ctx.moveTo(-20, -8); ctx.lineTo(-10, -8); ctx.lineTo(3, -19); ctx.lineTo(3, 19); ctx.lineTo(-10, 8); ctx.lineTo(-20, 8); ctx.closePath();
+    ctx.lineWidth = 6; ctx.strokeStyle = edge; ctx.stroke(); ctx.fillStyle = '#fff'; ctx.fill();
+    if (muted) two(() => { ctx.beginPath(); ctx.moveTo(10, -9); ctx.lineTo(24, 9); ctx.moveTo(24, -9); ctx.lineTo(10, 9); }, 5);
+    else { two(() => { ctx.beginPath(); ctx.arc(4, 0, 12, -0.8, 0.8); }, 4); two(() => { ctx.beginPath(); ctx.arc(4, 0, 21, -0.8, 0.8); }, 4); }
+  } else if (kind === 'freeze') { // a snowflake
+    two(() => { ctx.beginPath(); for (let k = 0; k < 3; k++) { const a = k * Math.PI / 3, c = Math.cos(a), sn = Math.sin(a); ctx.moveTo(-sn * 22, -c * 22); ctx.lineTo(sn * 22, c * 22);
+      for (const e of [-1, 1]) { const bx = sn * 13 * e, by = c * 13 * e; for (const f of [-1, 1]) { const b2 = a + f * 0.7; ctx.moveTo(bx, by); ctx.lineTo(bx + Math.sin(b2) * 8 * e, by + Math.cos(b2) * 8 * e); } } } }, 5);
+  } else if (kind === 'magnet') { // a horseshoe magnet with white tips
+    ctx.beginPath(); ctx.moveTo(-15, -18); ctx.lineTo(-15, 2); ctx.arc(0, 2, 15, Math.PI, 0, true); ctx.lineTo(15, -18);
+    ctx.strokeStyle = edge; ctx.lineWidth = 18; ctx.stroke(); ctx.strokeStyle = '#e5554c'; ctx.lineWidth = 12; ctx.stroke();
+    ctx.lineCap = 'butt'; ctx.strokeStyle = '#ffffff'; ctx.beginPath(); ctx.moveTo(-15, -20); ctx.lineTo(-15, -9); ctx.moveTo(15, -20); ctx.lineTo(15, -9); ctx.stroke();
+  } else if (kind === 'clock') {
+    ctx.beginPath(); ctx.arc(0, 2, 17, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 4; ctx.stroke();
+    fillRR(-5, -22, 10, 6, 2, '#fff'); ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(0, -8); ctx.moveTo(0, 2); ctx.lineTo(7, 6); ctx.strokeStyle = '#3a2357'; ctx.lineWidth = 3.5; ctx.stroke();
+  } else if (kind === 'piece') { // a little toy block
+    fillRR(-16, -12, 32, 30, 7, '#c2731a'); fillRR(-16, -16, 32, 30, 7, '#ffd968'); strokeRR(-16, -16, 32, 30, 7, '#fff', 3);
+  }
+  ctx.restore();
+}
+function pill(x, y, w, h, fill) { fillRR(x, y + 4, w, h, h / 2, 'rgba(20,10,40,0.25)'); fillRR(x, y, w, h, h / 2, fill); strokeRR(x, y, w, h, h / 2, 'rgba(255,255,255,0.75)', 3); }
+function confetti(t0, n, life) { // a burst of paper from the top, the same every time for the same start
+  const u = state.t - t0; if (u < 0 || u > life) return;
+  const cs = ['#e5554c', '#ffd25a', '#5fa9f0', '#8be06a', '#c8a2e0'];
+  for (let k = 0; k < n; k++) {
+    const x0 = (k * 97.3) % W, vy = 260 + (k * 53) % 240, sway = Math.sin(u * 3 + k) * 30, y = -40 + u * vy - ((k * 31) % 200), a = Math.min(1, (life - u) / 0.6);
+    if (y < -30 || y > H) continue;
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(x0 + sway, y); ctx.rotate(u * 4 + k); ctx.scale(1, Math.cos(u * 6 + k)); ctx.fillStyle = cs[k % cs.length]; ctx.fillRect(-7, -4, 14, 8); ctx.restore();
   }
 }
 
-// ---- The city park: a path to a fountain, lawns, trees, the city behind ----------------------------
-const SPOTS_PARK = [ // bench, lamp, picnic basket, bicycle, fountain, ice-cream cart
-  { x: 552, y: 664, s: 190, stand: 'ground' },
-  { x: 172, y: 664, s: 230, stand: 'ground' },
-  { x: 545, y: 958, s: 170, stand: 'ground' },
-  { x: 168, y: 962, s: 220, stand: 'ground' },
-  { x: 360, y: 628, s: 220, stand: 'ground' },
-  { x: 360, y: 1088, s: 220, stand: 'ground' },
-];
-const PVP = { x: 360, y: 520 };
-const pFloorX = (bx, y) => PVP.x + (bx - PVP.x) * (y - PVP.y) / (H - PVP.y);
-function drawCloud(x, y, s) { for (const [dx, dy, r] of [[0, 0, 40], [36, -14, 34], [70, 4, 36], [-34, 8, 28], [34, 12, 34]]) ellipse(ctx, x + dx * s, y + dy * s, r * s, r * 0.8 * s, 0, 'rgba(255,255,255,0.9)'); }
-function drawCrown(x, y, r) { // a tree's leafy crown, lit from the top right
-  const greens = ['#3f7a40', '#4f8f4c', '#5f9f52', '#7fb86a'];
-  for (let k = 0; k < 9; k++) { const a = k * 2.4, d = r * 0.45 * ((k % 3) / 2 + 0.3); ellipse(ctx, x + Math.cos(a) * d, y + Math.sin(a) * d * 0.8, r * 0.55, r * 0.5, 0, greens[k % 3]); }
-  ellipse(ctx, x + r * 0.25, y - r * 0.3, r * 0.35, r * 0.28, 0, 'rgba(160,210,120,0.6)');
-}
-function drawBunting(x0, x1, y, sag) {
-  ctx.beginPath(); ctx.moveTo(x0, y); ctx.quadraticCurveTo((x0 + x1) / 2, y + sag * 2, x1, y); stroke(ctx, '#7a5a2a', 3);
-  const cs = ['#e0574f', '#f2cf62', '#5f9fd6', '#9cc7a0', '#f4a3b8'];
-  for (let k = 1; k < 14; k++) { const t = k / 14, px = x0 + (x1 - x0) * t, py = y + sag * 2 * 2 * t * (1 - t); poly([[px - 12, py], [px + 12, py], [px, py + 26]], cs[k % 5]); }
-}
-function drawParkStatic(n) {
-  // sky, sun, clouds
-  ctx.fillStyle = lin(ctx, 0, 0, 0, PVP.y, [[0, '#6fb6e6'], [1, '#d8eff8']]); ctx.fillRect(0, 0, W, PVP.y + 10);
-  ctx.fillStyle = rad(ctx, 610, 70, 10, 260, [[0, 'rgba(255,250,210,0.9)'], [0.2, 'rgba(255,240,180,0.45)'], [1, 'rgba(255,240,180,0)']]); ctx.fillRect(0, 0, W, 400);
-  drawCloud(170, 200, 0.9); drawCloud(470, 250, 0.7); drawCloud(620, 330, 0.55);
-  // the city behind, hazy
-  for (const [x, w, h, c] of [[60, 70, 190, '#a9bfd2'], [140, 56, 250, '#b6c8d8'], [210, 80, 160, '#a3b9cd'], [430, 60, 230, '#b0c4d6'], [500, 90, 280, '#a9bfd2'], [600, 70, 180, '#b6c8d8']]) {
-    ctx.fillStyle = c; ctx.fillRect(x, 520 - h, w, h);
-    ctx.fillStyle = 'rgba(255,255,255,0.35)'; for (let yy = 520 - h + 12; yy < 500; yy += 18) for (let xx = x + 8; xx < x + w - 8; xx += 14) ctx.fillRect(xx, yy, 6, 8);
-  }
-  ctx.fillStyle = 'rgba(216,239,248,0.35)'; ctx.fillRect(0, 200, W, 330);
-  for (let x = -20; x < W + 40; x += 36) drawCrown(x, 506 + Math.sin(x) * 6, 34 + (x * 7) % 12);
-  // lawns with mowing stripes running back
-  ctx.fillStyle = lin(ctx, 0, PVP.y, 0, H, [[0, '#7fb85c'], [1, '#5f9f48']]); ctx.fillRect(0, PVP.y + 10, W, H - PVP.y);
-  for (let j = -12; j < 20; j += 2) { const b0 = j * 70, b1 = b0 + 70, ya = PVP.y + 10; poly([[pFloorX(b0, ya), ya], [pFloorX(b1, ya), ya], [b1, H], [b0, H]], 'rgba(255,255,255,0.07)'); }
-  ctx.fillStyle = lin(ctx, 0, PVP.y, 0, 640, [[0, 'rgba(40,80,40,0.3)'], [1, 'rgba(40,80,40,0)']]); ctx.fillRect(0, PVP.y + 10, W, 130);
-  // hedges along the back
-  for (const [xa, xb] of [[0, 230], [490, W]]) { fillRR(xa - 10, 548, xb - xa + 20, 40, 18, lin(ctx, 0, 548, 0, 588, [[0, '#5f9f52'], [1, '#3f7a40']])); }
-  // the gravel path and the round plaza
-  poly([[338, 540], [382, 540], [560, H], [160, H]], lin(ctx, 0, 540, 0, H, [[0, '#d9c99f'], [1, '#efe2bf']]));
-  for (const [a, b] of [[338, 160], [382, 560]]) { ctx.beginPath(); ctx.moveTo(a, 540); ctx.lineTo(b, H); stroke(ctx, '#b8a37a', 4); }
-  ellipse(ctx, 360, 622, 196, 40, 0, '#b8a37a'); ellipse(ctx, 360, 618, 188, 36, 0, lin(ctx, 0, 582, 0, 654, [[0, '#e3d4ad'], [1, '#f2e6c6']]));
-  // the picnic blanket
-  const bl = new Path2D(); bl.moveTo(442, 908); bl.lineTo(642, 908); bl.lineTo(684, 990); bl.lineTo(420, 990); bl.closePath(); gingham(bl, 410, 900, 280, 100, 12, 'rgba(224,56,79,0.55)');
-  // big trees framing the view
-  for (const left of [true, false]) {
-    const tx = left ? 20 : W - 20, d = left ? 1 : -1;
-    softShadow(tx + d * 40, 1010, 120, 22, 0.35);
-    poly([[tx - 26, 1010], [tx + 26, 1010], [tx + 16 + d * 10, 150], [tx - 16 + d * 10, 150]], lin(ctx, tx - 26, 0, tx + 26, 0, [[0, '#4a2f1f'], [0.5, '#8a5a32'], [1, '#3e2614']]));
-    drawCrown(tx + d * 40, 110, 120); drawCrown(tx + d * 140, 40, 80); drawCrown(tx - d * 10, 240, 80);
-  }
-  // dressing that comes with progress
-  if (n >= 1) for (const [x, y] of [[262, 700], [458, 700], [232, 780], [490, 780], [200, 880], [522, 880]]) for (let k = 0; k < 6; k++) { const a = k * 1.05; ellipse(ctx, x + Math.cos(a) * 14, y + Math.sin(a) * 6, 6, 5, 0, ['#e0574f', '#f2cf62', '#f4a3b8', '#c8a2e0'][k % 4]); }
-  if (n >= 3) { drawPlant(70, 1160, 0.9); drawPlant(650, 1160, 0.9); }
-  if (n >= 4) drawBunting(60, 660, 260, 46);
-}
-function parkLive(lit, n) {
-  if (n >= 2) for (let k = 0; k < 4; k++) { // birds crossing the sky
-    const x = ((k * 230 + state.t * 34) % 900) - 90, y = 150 + k * 34 + Math.sin(state.t + k) * 8, f = Math.sin(state.t * 8 + k) * 7;
-    ctx.beginPath(); ctx.moveTo(x - 12, y - f); ctx.quadraticCurveTo(x - 5, y - 4, x, y); ctx.quadraticCurveTo(x + 5, y - 4, x + 12, y - f); stroke(ctx, '#3d3a4a', 3);
-  }
-  if (n >= 2) for (let k = 0; k < 3; k++) { // butterflies over the flowers
-    const x = 260 + k * 110 + Math.sin(state.t * 0.9 + k * 2) * 40, y = 760 + Math.cos(state.t * 1.3 + k) * 30, w = Math.abs(Math.sin(state.t * 12 + k)) * 8 + 2;
-    ellipse(ctx, x - w / 2, y, w, 6, 0, ['#f4a3b8', '#f2cf62', '#9fd2ee'][k]); ellipse(ctx, x + w / 2, y, w, 6, 0, ['#f4a3b8', '#f2cf62', '#9fd2ee'][k]);
-  }
-  if (lit > 0) for (let k = 0; k < 5; k++) { // balloons when the park is full
-    const bx = 440 + k * 22, by = 820 - k * 18 + Math.sin(state.t * 2 + k) * 6;
-    ctx.beginPath(); ctx.moveTo(bx, by + 26); ctx.lineTo(470, 940); stroke(ctx, 'rgba(60,60,60,0.5)', 1.5);
-    ellipse(ctx, bx, by, 18 * lit, 22 * lit, 0, ['#e0574f', '#f2cf62', '#5f9fd6', '#9cc7a0', '#f4a3b8'][k]);
-  }
-}
-
-// ---- The scenes, by AREAS key -------------------------------------------------------------------
-const AREA_ART = {
-  museum: { spots: SPOTS_MUSEUM, still: drawHallStatic, live: museumLive, visitors: true },
-  kitchen: { spots: SPOTS_KITCHEN, still: drawKitchenStatic, live: kitchenLive, visitors: false },
-  park: { spots: SPOTS_PARK, still: drawParkStatic, live: parkLive, visitors: true },
-};
+// ---- The hub: the scene's room in 3D, with names, numbers and buttons on top -----------------------
 const areaStart = a => OBJECTS.findIndex(o => o.area === a);
 const areaObjects = a => OBJECTS.map((_, i) => i).filter(i => OBJECTS[i].area === a);
-const spotOf = i => AREA_ART[AREAS[OBJECTS[i].area].key].spots[i - areaStart(OBJECTS[i].area)];
-function drawArea(a, lit, n) { // the scene's still picture (drawn once per progress step), then what moves
-  const key = AREAS[a].key, A = AREA_ART[key];
-  cached(key + n, () => A.still(n));
-  A.live(lit, n);
-  if (lit > 0) { ctx.fillStyle = `rgba(255,205,120,${0.12 * lit})`; ctx.fillRect(0, 0, W, H); }
-}
-const drawHall = (lit, n = 0) => drawArea(0, lit, n);
-
-function drawVignette() {
-  ctx.fillStyle = rad(ctx, W / 2, H * 0.52, 320, 860, [[0, 'rgba(30,18,10,0)'], [1, 'rgba(30,18,10,0.45)']]); ctx.fillRect(0, 0, W, H);
-}
-function drawPedestal(x, y, w, done) { // a round stone plinth: x its left, y its top face
-  const cx = x + w / 2, r = w / 2, ry = Math.max(8, w * 0.14), h = 64, side = (cx - VP.x) / W;
-  softShadow(cx + side * 60, y + h + 10, w * 0.95, ry * 1.6, 0.45);
-  ctx.beginPath(); ctx.ellipse(cx, y + h, r * 1.16, ry * 1.1, 0, 0, Math.PI * 2); ctx.fillStyle = '#b39d7c'; ctx.fill(); // foot
-  ctx.beginPath(); ctx.moveTo(cx - r * 1.16, y + h); ctx.lineTo(cx - r * 1.16, y + h - 8); ctx.ellipse(cx, y + h - 8, r * 1.16, ry * 1.1, 0, Math.PI, 0, true); ctx.lineTo(cx + r * 1.16, y + h); ctx.ellipse(cx, y + h, r * 1.16, ry * 1.1, 0, 0, Math.PI, false); ctx.closePath();
-  ctx.fillStyle = lin(ctx, cx - r * 1.16, 0, cx + r * 1.16, 0, [[0, '#a08a68'], [0.35 - side * 0.3, '#f6ecd8'], [1, '#8f7a5a']]); ctx.fill();
-  const body = r * 0.86;
-  ctx.beginPath(); ctx.moveTo(cx - body, y); ctx.lineTo(cx - body, y + h - 8); ctx.ellipse(cx, y + h - 8, body, ry * 0.85, 0, Math.PI, 0, true); ctx.lineTo(cx + body, y); ctx.closePath();
-  ctx.fillStyle = lin(ctx, cx - body, 0, cx + body, 0, [[0, '#a8916e'], [0.3 - side * 0.3, '#fbf3e6'], [0.62, '#e2d1b2'], [1, '#937c5b']]); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(cx, y, r, ry, 0, 0, Math.PI * 2); ctx.fillStyle = lin(ctx, 0, y - ry, 0, y + ry, [[0, '#fffaf0'], [1, '#e2d1b2']]); ctx.fill();
-  ctx.strokeStyle = 'rgba(120,95,65,0.6)'; ctx.lineWidth = 2; ctx.stroke();
-  fillRR(cx - w * 0.2, y + h * 0.35, w * 0.4, 18, 4, done ? lin(ctx, 0, y + h * 0.35, 0, y + h * 0.35 + 18, [[0, '#ffe28a'], [1, '#b8862a']]) : '#a8916b');
-}
 const nextObject = () => { const i = areaObjects(state.area).find(k => !state.done[k]); return i === undefined ? -1 : i; }; // the next level in this scene, -1 when all are in
-function drawSpot(i) {
-  const sp = spotOf(i), o = OBJECTS[i], done = state.done[i], s = sp.s, ox = sp.x - s / 2, oy = sp.y - s * 0.95;
-  if (sp.stand === 'plinth') drawPedestal(sp.x - s * 0.32, sp.y, s * 0.64, done);
-  const toVP = (x, y, t) => [x + (VP.x - x) * t, y + (VP.y - y) * t]; // a point pushed back into the room
-  const gx0 = sp.x - 88, gx1 = sp.x + 88, gy0 = sp.y - s - 14, gy1 = sp.y + 2; // the glass box's front face
-  if (sp.stand === 'case') { // a wooden stand: front face and top face, then the back of the glass box
-    softShadow(sp.x, FLOOR_Y + 34, 130, 16, 0.45);
-    ctx.fillStyle = lin(ctx, sp.x - 84, 0, sp.x + 84, 0, [[0, '#6e3f22'], [0.4, '#b77a46'], [1, '#5f361d']]); ctx.fillRect(sp.x - 84, sp.y + 8, 168, FLOOR_Y + 30 - sp.y);
-    for (let k = 0; k < 2; k++) strokeRR(sp.x - 64, sp.y + 26 + k * 50, 128, 38, 4, 'rgba(255,220,180,0.25)', 2);
-    poly([[sp.x - 96, sp.y + 8], [sp.x + 96, sp.y + 8], toVP(sp.x + 96, sp.y + 8, 0.06), toVP(sp.x - 96, sp.y + 8, 0.06)], '#e0a06a');
-    fillRR(sp.x - 96, sp.y + 6, 192, 14, 3, lin(ctx, 0, sp.y + 6, 0, sp.y + 20, [[0, '#d18c56'], [1, '#8a5030']]));
-    const b0 = toVP(gx0, gy0, 0.06), b1 = toVP(gx1, gy1, 0.06);
-    ctx.fillStyle = 'rgba(190,220,235,0.12)'; ctx.fillRect(b0[0], b0[1], b1[0] - b0[0], b1[1] - b0[1]);
-    ctx.strokeStyle = 'rgba(201,154,58,0.5)'; ctx.lineWidth = 2; ctx.strokeRect(b0[0], b0[1], b1[0] - b0[0], b1[1] - b0[1]);
-  }
-  if (sp.stand !== 'case') softShadow(sp.x, sp.y + 2, s * 0.34, 7, 0.4); // where the object stands
-  const pop = state.pop && state.pop.i === i ? Math.min(1, (state.t - state.pop.t) / 0.6) : 1, sc = s / ART_N * (pop < 1 ? 0.4 + 0.6 * (1 - Math.pow(1 - pop, 3)) + 0.12 * Math.sin(pop * Math.PI) : 1);
-  if (done) {
-    ctx.fillStyle = rad(ctx, sp.x, oy + s / 2, 10, s * 0.7, [[0, 'rgba(255,225,150,0.5)'], [1, 'rgba(255,225,150,0)']]); ctx.fillRect(sp.x - s, oy - s * 0.3, s * 2, s * 1.4);
-    const tk = ARTS[i].thick; ctx.drawImage(tk, sp.x - ART_N * sc / 2, sp.y - ART_N * sc * 0.95, tk.width * sc, tk.height * sc);
-    for (let k = 0; k < 3; k++) { const ph = state.t * 1.3 + k * 2.1 + i; sparkle(ox + s * (0.2 + 0.3 * k), oy + s * (0.25 + 0.2 * Math.sin(ph)), 8, 0.5 + 0.5 * Math.sin(ph * 2)); }
-    if (pop < 1) for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; sparkle(sp.x + Math.cos(a) * s * 0.6 * pop, oy + s / 2 + Math.sin(a) * s * 0.6 * pop, 14, 1 - pop); }
-  } else {
-    ctx.save(); ctx.globalAlpha = 0.94; ctx.drawImage(ARTS[i].sil, ox, oy, s, s); ctx.restore();
-    const next = nextObject() === i, bob = next ? Math.sin(state.t * 5) * 6 : 0;
-    ctx.beginPath(); ctx.arc(sp.x, oy + s * 0.55 + bob, 24, 0, Math.PI * 2); ctx.fillStyle = next ? C.gold : C.cream; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 3; ctx.stroke();
-    text(String(i + 1), sp.x, oy + s * 0.55 + bob + 1, 26, C.ink, 'center', '800');
-    if (next) { const ay = oy - 6 + Math.sin(state.t * 5) * 8; ctx.beginPath(); ctx.moveTo(sp.x - 16, ay - 22); ctx.lineTo(sp.x + 16, ay - 22); ctx.lineTo(sp.x, ay); ctx.closePath(); ctx.fillStyle = C.gold; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 3; ctx.stroke(); }
-  }
-  if (sp.stand === 'case') { // the glass box in front: top face, front face, gold edges, a glint
-    const t0 = toVP(gx0, gy0, 0.06), t1 = toVP(gx1, gy0, 0.06);
-    poly([[gx0, gy0], [gx1, gy0], t1, t0], 'rgba(235,248,252,0.35)');
-    ctx.fillStyle = lin(ctx, gx0, gy0, gx1, gy1, [[0, 'rgba(230,245,250,0.22)'], [0.5, 'rgba(230,245,250,0.06)'], [1, 'rgba(230,245,250,0.18)']]); ctx.fillRect(gx0, gy0, gx1 - gx0, gy1 - gy0);
-    ctx.strokeStyle = '#c99a3a'; ctx.lineWidth = 4; ctx.strokeRect(gx0, gy0, gx1 - gx0, gy1 - gy0);
-    ctx.beginPath(); ctx.moveTo(gx0, gy0); ctx.lineTo(t0[0], t0[1]); ctx.lineTo(t1[0], t1[1]); ctx.lineTo(gx1, gy0); stroke(ctx, '#c99a3a', 3);
-    ctx.beginPath(); ctx.moveTo(gx0 + 18, gy0 + 16); ctx.lineTo(gx0 + 60, gy0 + 90); stroke(ctx, 'rgba(255,255,255,0.55)', 6);
-    ctx.beginPath(); ctx.moveTo(gx0 + 40, gy0 + 16); ctx.lineTo(gx0 + 62, gy0 + 54); stroke(ctx, 'rgba(255,255,255,0.35)', 3);
-  }
-  if (done) { const ty = sp.y + (sp.stand === 'plinth' ? 86 : sp.stand === 'case' ? 24 : 14); fillRR(sp.x - 74, ty + 3, 148, 28, 8, 'rgba(40,20,10,0.35)'); fillRR(sp.x - 74, ty, 148, 28, 8, lin(ctx, 0, ty, 0, ty + 28, [[0, '#9a2a40'], [1, '#6a1828']])); text(o.name, sp.x, ty + 15, 16, '#fbf3e6', 'center', '700'); }
-  if (state.kbHub && state.sel === i) strokeRR(ox - 6, oy - 6, s + 12, s + 12, 20, C.gold, 5);
+function hubView() {
+  return { done: state.done, lit: state.openAt === null ? 0 : Math.min(1, (state.t - state.openAt) / 1.5), t: state.t, pop: state.pop, visitors: state.visitors,
+    next: state.openAt === null ? nextObject() : -1, since: state.t - (state.hubAt || 0) };
 }
-function drawHub() {
-  const lit = state.openAt === null ? 0 : Math.min(1, (state.t - state.openAt) / 1.5);
-  const ids = areaObjects(state.area), n = ids.filter(i => state.done[i]).length, A = AREA_ART[AREAS[state.area].key];
-  drawArea(state.area, lit, n);
-  ids.slice().sort((a, b) => spotOf(a).y - spotOf(b).y).forEach(drawSpot); // back to front
-  if (state.openAt !== null && A.visitors) for (const v of state.visitors) drawVisitor(v.x, v.lane ? 1110 : 1080, v.kid ? 0.75 : 1, v.shirt, v.hair, state.t * 6 + v.x * 0.05);
-  drawVignette();
-  // header: the scene's name plaque and its progress
-  fillRR(130, 26, 460, 64, 32, 'rgba(30,10,5,0.4)'); fillRR(130, 20, 460, 64, 32, lin(ctx, 0, 20, 0, 84, [[0, '#a3324a'], [1, '#6a1828']])); strokeRR(130, 20, 460, 64, 32, C.gold, 4);
-  text(AREAS[state.area].name, W / 2, 53, 34, '#fbf3e6', 'center', '800');
-  fillRR(200, 96, 320, 24, 12, '#e2d2b6'); fillRR(200, 96, Math.max(24, 320 * n / 6), 24, 12, C.gold); strokeRR(200, 96, 320, 24, 12, C.line, 3);
-  text(`Bối cảnh ${state.area + 1}/${AREAS.length} · ${n}/6`, W / 2, 109, 17, C.ink, 'center', '800');
-  drawIconBtn(BTN.mute, 'mute');
+function drawHub(dt) {
+  const view = hubView(), lit = view.lit, ids = areaObjects(state.area), n = ids.filter(i => state.done[i]).length;
+  const marks = ui.marks = G3.renderHub(state.area, view, dt);
+  if (lit > 0) { ctx.fillStyle = `rgba(255,205,120,${0.1 * lit})`; ctx.fillRect(0, 0, W, H); }
+  // names under finished objects, numbers on the shadows
+  for (const i of ids) {
+    const m = marks[i]; if (!m) continue;
+    if (state.done[i]) {
+      const pop = state.pop && state.pop.i === i ? easeOutBack((state.t - state.pop.t - 0.5) / 0.4) : 1; if (pop <= 0) continue;
+      ctx.font = `800 18px ${FONT}`; const w = ctx.measureText(OBJECTS[i].name).width + 30, y = m.base.y + 6;
+      ctx.save(); scaleAbout(m.base.x, y + 15, pop);
+      fillRR(m.base.x - w / 2, y + 3, w, 30, 15, 'rgba(30,10,20,0.35)'); fillRR(m.base.x - w / 2, y, w, 30, 15, lin(ctx, 0, y, 0, y + 30, [[0, '#d0435a'], [1, '#8f2236']])); strokeRR(m.base.x - w / 2, y, w, 30, 15, '#f2cf62', 2.5);
+      text(OBJECTS[i].name, m.base.x, y + 16, 18, '#fff8ec', 'center', '800'); ctx.restore();
+    } else {
+      const next = view.next === i, bob = next ? Math.sin(state.t * 5) * 5 : 0, x = m.mid.x, y = m.mid.y + bob;
+      ctx.save(); scaleAbout(x, y, next ? 1.1 : 1);
+      ctx.beginPath(); ctx.arc(x, y + 4, 27, 0, 7); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y, 27, 0, 7); ctx.fillStyle = next ? lin(ctx, 0, y - 27, 0, y + 27, [[0, PAL.gold[0]], [1, PAL.gold[1]]]) : lin(ctx, 0, y - 27, 0, y + 27, [[0, '#fffaf0'], [1, '#e2d3bb']]); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.stroke();
+      outText(String(i + 1), x, y + 1, 28, '#fff', next ? PAL.gold[2] : '#7a655c'); ctx.restore();
+      if (next) { const ay = m.top.y - 4 + Math.sin(state.t * 5) * 8; ctx.beginPath(); ctx.moveTo(x - 18, ay - 24); ctx.lineTo(x + 18, ay - 24); ctx.lineTo(x, ay); ctx.closePath(); ctx.fillStyle = PAL.gold[1]; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.stroke(); }
+    }
+    if (state.kbHub && state.sel === i) strokeRR(m.x0 - 8, m.y0 - 8, m.x1 - m.x0 + 16, m.y1 - m.y0 + 16, 22, PAL.gold[0], 5);
+  }
+  if (state.pop) { // sparkles burst from an object that just came home
+    const m = marks[state.pop.i], u = (state.t - state.pop.t) / 0.9;
+    if (m && u < 1) for (let k = 0; k < 12; k++) { const a = k / 12 * Math.PI * 2 + u, r = 30 + easeOut(u) * 150; sparkle(m.mid.x + Math.cos(a) * r, m.mid.y + Math.sin(a) * r * 0.8, 16 * (1 - u * 0.6), 1 - u); }
+  }
+  ctx.fillStyle = rad(ctx, W / 2, H * 0.5, 380, 900, [[0, 'rgba(25,15,35,0)'], [1, 'rgba(25,15,35,0.42)']]); ctx.fillRect(0, 0, W, H);
+  // header: the scene's name and its progress
+  const hx = 130, hw = 460;
+  glossy(hx, 20, hw, 70, 35, PAL.purple); outText(AREAS[state.area].name, W / 2, 56, 34, '#ffffff', PAL.purple[2]);
+  fillRR(200, 104, 320, 28, 14, 'rgba(30,15,50,0.55)');
+  const fillW = 320 * Math.min(1, n / 6); if (fillW > 0) fillRR(200, 104, Math.max(28, fillW), 28, 14, lin(ctx, 0, 104, 0, 132, [[0, PAL.gold[0]], [1, PAL.gold[1]]]));
+  strokeRR(200, 104, 320, 28, 14, '#fff', 3); outText(`${n}/6`, W / 2, 119, 18, '#fff', '#3a2357');
+  outText(`Bối cảnh ${state.area + 1}/${AREAS.length}`, W / 2, 152, 18, '#fff', '#3a2357', '800');
+  drawIconBtn(BTN.mute, 'mute', PAL.blue);
   if (state.openAt !== null) {
-    ctx.globalAlpha = lit;
-    fillRR(110, 136, 500, 60, 30, C.gold); strokeRR(110, 136, 500, 60, 30, C.line, 3);
-    text(state.gained, W / 2, 167, 32, C.ink, 'center', '800');
-    ctx.globalAlpha = 1;
-    if (state.t - state.openAt > 1.5) drawButton(BTN.play, state.area + 1 < AREAS.length ? `Tiếp: ${AREAS[state.area + 1].name}` : 'Chơi lại từ đầu', C.sage, state.area + 1 < AREAS.length ? 28 : 32);
+    confetti(state.openAt, 70, 4);
+    const a = easeOutBack((state.t - state.openAt) / 0.6);
+    ctx.save(); scaleAbout(W / 2, 205, a); glossy(100, 175, 520, 64, 32, PAL.gold); outText(state.gained, W / 2, 207, 30, '#fff', PAL.gold[2]); ctx.restore();
+    if (state.t - state.openAt > 1.5) drawButton(BTN.play, state.area + 1 < AREAS.length ? `Tiếp: ${AREAS[state.area + 1].name}` : 'Chơi lại từ đầu', PAL.green, state.area + 1 < AREAS.length ? 28 : 32, 'play', 0.025 * Math.sin(state.t * 4));
   } else {
-    drawButton(BTN.play, `Chơi · Màn ${nextObject() + 1}`, C.gold, 38);
+    drawButton(BTN.play, `Chơi · Màn ${nextObject() + 1}`, PAL.green, 38, 'play', 0.025 * Math.sin(state.t * 4));
     if (state.tut.hub) { // first visit: point at the play button
       const k = (state.t % 1.2) / 1.2, press = k > 0.5 && k < 0.7 ? 8 : 0;
-      tipBubble('Chạm để ghép vật đầu tiên!', W / 2, 1080, 'down');
-      drawHand(W / 2 + 70, BTN.play.y + 50 + press, 90);
+      tipBubble('Chạm để ghép vật đầu tiên!', W / 2, 1075, 'down');
+      drawHand(W / 2 + 70, BTN.play.y + 52 + press, 90);
     }
   }
   if (state.areaAt !== null && state.t - state.areaAt < 3) { // a new scene opens
-    const a = Math.min(1, (state.t - state.areaAt) / 0.3, (3 - (state.t - state.areaAt)) / 0.5);
-    ctx.globalAlpha = Math.max(0, a); fillRR(80, 560, 560, 150, 30, 'rgba(40,20,15,0.85)'); strokeRR(80, 560, 560, 150, 30, C.gold, 4);
-    text('Bối cảnh mới', W / 2, 604, 26, '#f2cf62', 'center', '800'); text(AREAS[state.area].name, W / 2, 656, 40, '#fbf3e6', 'center', '800'); ctx.globalAlpha = 1;
+    const u = state.t - state.areaAt, a = Math.max(0, Math.min(1, (3 - u) / 0.5)), k = easeOutBack(u / 0.5);
+    ctx.save(); ctx.globalAlpha = a; scaleAbout(W / 2, 640, k);
+    glossy(80, 560, 560, 160, 40, PAL.purple); outText('Bối cảnh mới', W / 2, 606, 28, PAL.gold[0], PAL.purple[2]); outText(AREAS[state.area].name, W / 2, 664, 44, '#fff', PAL.purple[2]);
+    ctx.restore();
   }
 }
 // ---- Tips: a speech bubble and a pointing hand ----------------------------------------------------
@@ -1364,173 +1048,139 @@ function drawHand(x, y, s) { // a pointing finger whose tip is at x, y
   fillRR(-s * 0.26, s * 0.67, s * 0.58, s * 0.14, 5, C.sage); strokeRR(-s * 0.26, s * 0.67, s * 0.58, s * 0.14, 5, C.line, 3);
   ctx.restore();
 }
-function drawVisitor(x, y, s, shirt, hair, ph) {
-  const sw = Math.sin(ph) * 8 * s;
-  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
-  ctx.fillStyle = 'rgba(60,40,30,0.2)'; ctx.beginPath(); ctx.ellipse(0, 46, 18, 5, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.lineCap = 'round'; ctx.strokeStyle = '#3d3a4a'; ctx.lineWidth = 7;
-  ctx.beginPath(); ctx.moveTo(-3, 18); ctx.lineTo(-3 + sw, 44); ctx.moveTo(3, 18); ctx.lineTo(3 - sw, 44); ctx.stroke();
-  fillRR(-12, -14, 24, 36, 9, shirt);
-  ctx.strokeStyle = shirt; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-10, -6); ctx.lineTo(-14 - sw * 0.6, 14); ctx.moveTo(10, -6); ctx.lineTo(14 + sw * 0.6, 14); ctx.stroke();
-  ctx.fillStyle = '#f2c9a5'; ctx.beginPath(); ctx.ellipse(0, -26, 11, 12, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = hair; ctx.beginPath(); ctx.ellipse(0, -31, 12, 8, 0, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillRect(-12, -32, 5, 10);
-  ctx.fillStyle = '#3d2f2b'; ctx.fillRect(4, -27, 2.5, 3);
-  ctx.restore();
-}
 
-// ---- The puzzle ---------------------------------------------------------------------------------
-// A workbench under a lamp: the table runs away from us, the hollow is pressed into a thick wooden
-// board, and the pieces wait in a felt-lined drawer.
-function drawWorkbench() {
-  ctx.fillStyle = lin(ctx, 0, 0, 0, H, [[0, '#2a2028'], [1, '#140f14']]); ctx.fillRect(0, 0, W, H);
-  const TY = 128, tvp = { x: 360, y: -900 }, tx = (bx, y) => tvp.x + (bx - tvp.x) * (y - tvp.y) / (H - tvp.y);
-  poly([[tx(-80, TY), TY], [tx(800, TY), TY], [800, H], [-80, H]], lin(ctx, 0, TY, 0, H, [[0, '#3e281a'], [0.45, '#6e4529'], [1, '#4f3220']]));
-  for (let k = -1; k <= 9; k++) { const bx = k * 92 - 50; ctx.beginPath(); ctx.moveTo(tx(bx, TY), TY); ctx.lineTo(bx, H); stroke(ctx, 'rgba(25,12,6,0.5)', 3); }
-  for (let k = 0; k < 18; k++) { const bx = (k * 53) % 760 - 20, y0 = TY + 40 + (k * 97) % 1000; ctx.beginPath(); ctx.moveTo(tx(bx, y0), y0); ctx.quadraticCurveTo(tx(bx + 8, y0 + 60), y0 + 60, tx(bx, y0 + 120), y0 + 120); stroke(ctx, 'rgba(255,210,160,0.06)', 2); }
-  ctx.beginPath(); ctx.moveTo(tx(-80, TY), TY); ctx.lineTo(tx(800, TY), TY); stroke(ctx, 'rgba(255,220,170,0.35)', 3);
-  ctx.fillStyle = rad(ctx, 360, 480, 60, 600, [[0, 'rgba(255,225,170,0.38)'], [1, 'rgba(255,225,170,0)']]); ctx.fillRect(0, 0, W, H); // the lamp's pool of light
-  const x = BOARD.x - 14, y = BOARD.y - 14, w = BOARD.s + 28, h = BOARD.s + 28, d = 12;
-  fillRR(x + 10, y + d + 14, w, h, 28, 'rgba(0,0,0,0.5)');
-  fillRR(x, y + d, w, h, 28, lin(ctx, 0, y + h, 0, y + h + d, [[0, '#8a5a32'], [1, '#4e2f18']]));
-  fillRR(x, y, w, h, 28, lin(ctx, x, y, x + w, y + h, [[0, '#f2dcb2'], [1, '#c99d68']]));
-  for (let k = 0; k < 7; k++) { const gy = y + 40 + k * 88; ctx.beginPath(); ctx.moveTo(x + 20, gy); ctx.bezierCurveTo(x + w * 0.3, gy + 14, x + w * 0.6, gy - 12, x + w - 20, gy + 6); stroke(ctx, 'rgba(150,100,55,0.12)', 3); }
-  strokeRR(x + 3, y + 3, w - 6, h - 6, 25, 'rgba(255,250,235,0.65)', 3);
-  strokeRR(x, y, w, h, 28, 'rgba(70,40,20,0.6)', 2);
-  ctx.fillStyle = rad(ctx, W / 2, H * 0.5, 360, 900, [[0, 'rgba(10,5,5,0)'], [1, 'rgba(10,5,5,0.55)']]); ctx.fillRect(0, 0, W, H);
-}
-function drawDrawer() {
-  const { x, y, w, h } = TRAY, d = 14;
-  fillRR(x + 6, y + d + 10, w, h, 34, 'rgba(0,0,0,0.5)');
-  fillRR(x, y + d, w, h, 34, lin(ctx, 0, y + h, 0, y + h + d, [[0, '#6e4528'], [1, '#3e2614']]));
-  fillRR(x, y, w, h, 34, lin(ctx, 0, y, 0, y + h, [[0, '#c9925c'], [1, '#93603a']]));
-  strokeRR(x + 3, y + 3, w - 6, h - 6, 31, 'rgba(255,232,195,0.5)', 3);
-  fillRR(x + 16, y + 16, w - 32, h - 32, 22, lin(ctx, 0, y, 0, y + h, [[0, '#2a4438'], [1, '#365a4a']]));
-  ctx.save(); rr(ctx, x + 16, y + 16, w - 32, h - 32, 22); ctx.clip();
-  ctx.fillStyle = lin(ctx, 0, y + 16, 0, y + 70, [[0, 'rgba(0,0,0,0.55)'], [1, 'rgba(0,0,0,0)']]); ctx.fillRect(x, y + 16, w, 60); // the drawer's front lip shades the felt
-  ctx.fillStyle = lin(ctx, x + 16, 0, x + 50, 0, [[0, 'rgba(0,0,0,0.35)'], [1, 'rgba(0,0,0,0)']]); ctx.fillRect(x + 16, y, 40, h);
-  ctx.restore();
-}
-function drawPart(p, x, y, sc, alpha, lifted) {
-  ctx.save(); ctx.globalAlpha = alpha;
-  if (lifted && !CHEAP) { ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 10; }
-  const tc = p.part.tc; ctx.drawImage(tc, x, y, tc.width * sc, tc.height * sc); // the thick piece: its face at x, y, its side below and right
-  ctx.restore();
-}
-// A dragged part rides centred on the pointer, lifted a little so a finger does not cover it.
-function dragPos(d) { return { x: d.x - d.p.part.w * BS / 2, y: d.y - tune.drag_lift - d.p.part.h * BS / 2 }; }
-function drawPuzzle() {
-  const cur = state.cur, o = OBJECTS[cur.i], pz = cur.pz;
-  cached('bench', drawWorkbench);
-  // HUD: back, the clock, hint; the level and how many pieces are in below
-  drawIconBtn(BTN.back, 'back'); drawIconBtn(BTN.hint, 'hint');
-  const n = placedCount(), total = realCount(), tl = Math.max(0, cur.timeLeft), running = !cur.waitFirst && cur.hold <= 0 && cur.wonAt === null && cur.failAt === null;
-  const warn = tl <= tune.warn_time && cur.wonAt === null, pulse = warn && running ? 1 + 0.06 * Math.sin(cur.t * 12) : 1, pw = 200 * pulse, ph = 66 * pulse;
-  fillRR(W / 2 - pw / 2, 34 + 5, pw, ph, ph / 2, 'rgba(0,0,0,0.35)'); fillRR(W / 2 - pw / 2, 34, pw, ph, ph / 2, warn ? C.red : C.cream); strokeRR(W / 2 - pw / 2, 34, pw, ph, ph / 2, C.line, 3);
-  const cx = W / 2 - pw / 2 + 38, cy = 34 + ph / 2; ctx.beginPath(); ctx.arc(cx, cy, 19, 0, Math.PI * 2); ctx.fillStyle = '#fffaf0'; ctx.fill(); ctx.strokeStyle = C.line; ctx.lineWidth = 3; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, 15, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * tl / levelTime(cur.i)); ctx.closePath(); ctx.fillStyle = warn ? C.red : C.sage; ctx.fill();
-  const secs = Math.ceil(tl);
-  text(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, W / 2 + 22, cy + 1, 36, warn ? '#fff' : C.ink, 'center', '800');
-  text(`Màn ${cur.i + 1} · ${o.name} · ${n}/${total}`, W / 2, 132, 26, '#f3e6d0', 'center', '700');
-  // the shadow, and the parts already in it
-  const won = cur.wonAt !== null, wonK = won ? Math.min(1, (cur.t - cur.wonAt) / 0.8) : 0;
-  const shake = cur.t - cur.wrongAt < 0.25 ? Math.sin((cur.t - cur.wrongAt) * 80) * 5 : 0;
-  ctx.save(); ctx.translate(shake, 0);
-  if (won) { ctx.fillStyle = rad(ctx, W / 2, BOARD.y + BOARD.s / 2, 10, 380, [[0, `rgba(255,220,140,${0.5 * wonK})`], [1, 'rgba(255,220,140,0)']]); ctx.fillRect(0, BOARD.y - 60, W, BOARD.s + 120); }
-  ctx.drawImage(ARTS[cur.i].hole, BOARD.x, BOARD.y, BOARD.s, BOARD.s);
-  if (won && cur.t - cur.wonAt > 0.25) { const tk = ARTS[cur.i].thick; ctx.drawImage(tk, BOARD.x, BOARD.y, tk.width * BS, tk.height * BS); } // finished: the whole thick object, seams gone
-  else for (const p of pz.pieces.filter(q => q.placed && !q.decoy).sort((a, b) => a.part.k - b.part.k)) {
-    const h = homeOf(p), pop = Math.min(1, (cur.t - p.placedAt) / 0.18), sc = BS * (1 + 0.08 * (1 - pop)); // a small pop as it lands
-    drawPart(p, h.x - p.part.w * (sc - BS) / 2, h.y - p.part.h * (sc - BS) / 2, sc, 1, false);
+// ---- The puzzle: the 3D table (world.js), then the HUD over it ----------------------------------------
+const trayX0 = () => TRAY3.cx - TRAY3.n * TRAY3.pitch / 2;
+const inTray = p => Math.abs(p.y - TRAY3.cy) <= TRAY3.h / 2 + 14 && p.x >= trayX0() - 10 && p.x <= trayX0() + TRAY3.n * TRAY3.pitch + 10;
+const scrollMax = () => Math.max(0, unplaced().length - TRAY3.n);
+const pieceCentre = p => ({ x: (p.part.x + p.part.w / 2) * BS, y: (p.part.y + p.part.h / 2) * BS });
+function drawPuzzle(dt) {
+  const cur = state.cur, o = OBJECTS[cur.i];
+  G3.renderPuzzle(dt);
+  const n = placedCount(), total = realCount(), tl = Math.max(0, cur.timeLeft), won = cur.wonAt !== null, failed = cur.failAt !== null;
+  const frozen = cur.freezeLeft > 0 && !won && !failed, running = !cur.waitFirst && cur.hold <= 0 && !won && !failed && !frozen;
+  if (frozen) { // frost creeps in from the edges while the clock is frozen
+    const a = Math.min(1, cur.freezeLeft / 0.8, (tune.freeze_time - cur.freezeLeft) / 0.35);
+    ctx.fillStyle = rad(ctx, W / 2, H * 0.45, 260, 820, [[0, 'rgba(210,244,255,0)'], [1, `rgba(210,244,255,${0.6 * a})`]]); ctx.fillRect(0, 0, W, H);
+    for (let k = 0; k < 14; k++) { const x = (k * 151) % W, y = (k * 263) % H; if (Math.hypot(x - W / 2, y - H * 0.45) > 420) sparkle(x, y, 10 + (k % 3) * 4, a * (0.5 + 0.5 * Math.sin(state.t * 3 + k))); }
   }
-  if (won) for (let k = 0; k < 7; k++) { const a = k / 7 * Math.PI * 2 + cur.t * 0.6; sparkle(W / 2 + Math.cos(a) * 270 * wonK, BOARD.y + BOARD.s / 2 + Math.sin(a) * 270 * wonK, 14, wonK * (0.6 + 0.4 * Math.sin(cur.t * 5 + k))); }
+  // sparkles where a piece lands, and the magnet's pull
+  for (const p of cur.pz.pieces) {
+    if (!p.placed) continue; const u = (cur.t - p.placedAt) / 0.55; if (u >= 1 || u < 0) continue;
+    const c0 = pieceCentre(p), c = G3.boardToScreen(c0.x, c0.y, 0);
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2, r = 24 + easeOut(u) * 80; sparkle(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r * 0.75, 13 * (1 - u * 0.5), 1 - u); }
+    if (p.hinted && u < 0.8) { const s = G3.pieceScreen(p), mx = BTN.magnet.x + BTN.magnet.w / 2, my = BTN.magnet.y + 20;
+      if (s) { ctx.save(); ctx.globalAlpha = 1 - u / 0.8; ctx.strokeStyle = 'rgba(255,240,170,0.9)'; ctx.lineWidth = 6; ctx.setLineDash([4, 14]); ctx.lineDashOffset = -cur.t * 120; ctx.beginPath(); ctx.moveTo(mx, my); ctx.quadraticCurveTo((mx + s.x) / 2, Math.min(my, s.y) - 120, s.x, s.y); ctx.stroke(); ctx.restore(); } }
+  }
+  if (won) { // a warm glow behind the finished object, and confetti
+    const k = easeOut((cur.t - cur.wonAt - 0.3) / 0.8), c = G3.boardToScreen(BOARD.s / 2, BOARD.s / 2, 40);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = rad(ctx, c.x, c.y, 10, 420, [[0, `rgba(255,220,140,${0.35 * k})`], [1, 'rgba(255,220,140,0)']]); ctx.fillRect(0, 0, W, H); ctx.restore();
+    for (let s = 0; s < 9; s++) { const a = s / 9 * Math.PI * 2 + cur.t * 0.7; sparkle(c.x + Math.cos(a) * 300 * k, c.y + Math.sin(a) * 220 * k, 16, k * (0.6 + 0.4 * Math.sin(cur.t * 5 + s))); }
+    confetti(state.t - (cur.t - cur.wonAt) + 0.35, 80, 3.5);
+  }
+  // HUD: home, the level and its clock, how many pieces are in
+  drawIconBtn(BTN.back, 'back', PAL.blue);
+  outText(`MÀN ${cur.i + 1}`, W / 2, 50, 44, '#ffffff', '#3a2357');
+  const warn = tl <= tune.warn_time && !won, pulse = warn && running ? 1 + 0.07 * Math.abs(Math.sin(cur.t * 6)) : 1, pw = 200, ph = 54, px = W / 2 - pw / 2, py = 84;
+  ctx.save(); scaleAbout(W / 2, py + ph / 2, pulse);
+  pill(px, py, pw, ph, frozen ? lin(ctx, 0, py, 0, py + ph, [[0, PAL.ice[0]], [1, PAL.ice[1]]]) : warn ? lin(ctx, 0, py, 0, py + ph, [[0, PAL.red[0]], [1, PAL.red[1]]]) : 'rgba(40,28,80,0.55)');
+  icon(frozen ? 'freeze' : 'clock', px + 32, py + ph / 2, 36);
+  const secs = Math.ceil(tl); outText(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, W / 2 + 22, py + ph / 2 + 1, 32, '#fff', frozen ? PAL.ice[2] : '#3a2357');
   ctx.restore();
-  const d = cur.drag, list = won ? [] : unplaced();
-  if (cur.kb && !d && !won) { const p = list[cur.sel]; if (p) drawPart(p, cur.cursor.x - p.part.w * BS / 2, cur.cursor.y - p.part.h * BS / 2, BS, 0.75, true); }
-  // tray: one card per part
-  const failed = cur.failAt !== null;
+  pill(570, 38, 126, 62, 'rgba(40,28,80,0.55)'); icon('piece', 604, 69, 34); outText(`${n}/${total}`, 652, 70, 26, '#fff', '#3a2357');
+  outText(o.name, W / 2, 166, 24, '#fff', 'rgba(40,28,80,0.8)', '800');
+  // boosters: freeze the clock, or the magnet pulls one piece in for some time
   if (!won && !failed) {
-    cached('drawer', drawDrawer);
-    for (const p of pz.pieces) {
-      if (p.placed) continue;
-      const sl = cur.tray.slots[p.slot], pos = trayPos(p, cur.tray), sel = cur.kb && list[cur.sel] === p, out = d && d.p === p && d.moved;
-      fillRR(sl.x + 9, sl.y + 12, sl.s - 14, sl.s - 14, 16, 'rgba(0,0,0,0.35)'); // the card's shadow on the felt
-      fillRR(sl.x + 7, sl.y + 7, sl.s - 14, sl.s - 14, 16, sel ? '#f9e3b4' : lin(ctx, 0, sl.y, 0, sl.y + sl.s, [[0, '#fbf6ee'], [1, '#e6dccf']]));
-      strokeRR(sl.x + 7, sl.y + 7, sl.s - 14, sl.s - 14, 16, sel ? C.gold : '#7a655c', sel ? 5 : 3);
-      if (!out) drawPart(p, pos.x, pos.y, pos.sc, 1, false);
+    const fz = cur.freezes > 0 && !frozen;
+    drawIconBtn(BTN.freeze, 'freeze', PAL.ice, true, !fz); badge(BTN.freeze.x + BTN.freeze.w - 8, BTN.freeze.y + 10, String(cur.freezes), cur.freezes ? PAL.green : PAL.cream);
+    drawIconBtn(BTN.magnet, 'magnet', PAL.blue, true); badge(BTN.magnet.x + BTN.magnet.w - 8, BTN.magnet.y + 10, `-${tune.hint_cost}s`, PAL.red);
+    const max = scrollMax(), ty = TRAY3.cy; // arrows on the tray when more pieces wait out of sight
+    for (const [on, x, dir] of [[cur.scroll > 0.05, 14, -1], [cur.scroll < max - 0.05, W - 14, 1]]) if (on) {
+      const b = Math.sin(state.t * 5) * 3 * dir; ctx.beginPath(); ctx.moveTo(x + b - dir * 8, ty - 18); ctx.lineTo(x + b + dir * 8, ty); ctx.lineTo(x + b - dir * 8, ty + 18); stroke(ctx, '#fff', 7);
     }
-    if (o.decoys && n === 0 && !(d && d.moved)) text(`Cẩn thận: có ${o.decoys} mảnh không thuộc vật này`, W / 2, TRAY.y + 40, 24, '#ffb3a8', 'center', '700');
   }
-  if (d && d.moved) { const q = dragPos(d); drawPart(d.p, q.x, q.y, BS, 0.97, true); }
   // tips
   const tip = cur.tip;
   if (tip && !won && !failed) {
-    if (tip.kind === 'drag' && cur.waitFirst && !d) { // a hand carries the first piece from its card to its place, over and over
-      const p = cur.pz.pieces.find(q => !q.placed && !q.decoy), pos = trayPos(p, cur.tray), h = homeOf(p);
-      const k = (cur.t % 2.4) / 2.4, e = k < 0.15 ? 0 : k > 0.75 ? 1 : (k - 0.15) / 0.6, ease = e * e * (3 - 2 * e);
-      const x0 = pos.x + p.part.w * pos.sc / 2, y0 = pos.y + p.part.h * pos.sc / 2, x1 = h.x + p.part.w * BS / 2, y1 = h.y + p.part.h * BS / 2;
-      const hx = x0 + (x1 - x0) * ease, hy = y0 + (y1 - y0) * ease, sc = pos.sc + (BS - pos.sc) * ease;
-      if (k > 0.1 && k < 0.85) drawPart(p, hx - p.part.w * sc / 2, hy - p.part.h * sc / 2, sc, 0.55, false);
-      drawHand(hx + 6, hy + 6, 90);
-      tipBubble('Kéo mảnh vào đúng chỗ trong bóng đen', W / 2, TRAY.y - 34, 'down');
+    if (tip.kind === 'drag' && cur.waitFirst && !cur.drag) { // the hand carries a ghost of the first piece to its place
+      const g = G3.ghostAt; if (g) drawHand(g.x + 8, g.y + 8, 90);
+      tipBubble('Kéo mảnh vào đúng chỗ trong bóng đen', W / 2, 216, 'up');
     }
-    if (tip.kind === 'clock' && cur.t < tip.until) tipBubble('Đúng rồi! Ghép hết trước khi hết giờ', W / 2, 190, 'up');
-    if (tip.kind === 'hint' && cur.t < tip.until) tipBubble(`Bí? Bấm bóng đèn để được gợi ý (-${tune.hint_cost} giây)`, 470, 160, 'up');
-    if (tip.kind === 'shapes' && cur.t < tip.until) tipBubble('Vật này bị cắt thành mảnh lạ: nhìn màu và cạnh!', W / 2, 190, 'up');
+    if (tip.kind === 'clock' && cur.t < tip.until) tipBubble('Đúng rồi! Ghép hết trước khi hết giờ', W / 2, 214, 'up');
+    if (tip.kind === 'hint' && cur.t < tip.until) tipBubble(`Bí? Nam châm hút 1 mảnh vào (-${tune.hint_cost} giây)`, 420, 880, 'down');
+    if (tip.kind === 'freeze' && cur.t < tip.until) tipBubble(`Gấp? Đóng băng giờ ${tune.freeze_time} giây`, 300, 880, 'down');
+    if (tip.kind === 'shapes' && cur.t < tip.until) tipBubble('Vật này bị cắt thành mảnh lạ: nhìn màu và cạnh!', W / 2, 214, 'up');
   }
-  // finished
+  // finished: the card slides up with the stars
   if (won) {
-    const a = Math.min(1, (cur.t - cur.wonAt) / 0.5); ctx.globalAlpha = a;
-    fillRR(70, 830, 580, 400, 40, '#fbf3e6'); strokeRR(70, 830, 580, 400, 40, C.line, 3);
-    text('Hoàn thành!', W / 2, 890, 46, C.ink, 'center', '800');
-    text(o.name, W / 2, 945, 30, C.inkSoft, 'center', '700');
-    const left = Math.max(0, cur.timeLeft) / levelTime(cur.i), stars = left >= tune.star3 ? 3 : left >= tune.star2 ? 2 : 1;
-    for (let k = 0; k < 3; k++) { const pop = Math.min(1, Math.max(0, (cur.t - cur.wonAt - 0.3 - k * 0.2) / 0.25)); if (pop > 0) drawStar(W / 2 + (k - 1) * 100, 1020, 38 * pop, k < stars ? C.gold : '#d8cbb8'); }
-    text(`Còn ${Math.ceil(Math.max(0, cur.timeLeft))} giây${cur.hints ? ` · ${cur.hints} gợi ý` : ''}`, W / 2, 1075, 24, C.inkSoft, 'center', '700');
-    if (cur.t - cur.wonAt >= tune.win_delay) drawButton(BTN.cont, 'Về sảnh', C.sage, 34);
-    ctx.globalAlpha = 1;
+    const u = cur.t - cur.wonAt - 0.7, a = easeOutBack(u / 0.55); if (u > 0) {
+      const y = 800 + (1 - a) * 520; ctx.save(); ctx.globalAlpha = Math.min(1, u / 0.2);
+      fillRR(60, y + 10, 600, 430, 44, 'rgba(25,12,45,0.35)'); fillRR(60, y, 600, 430, 44, lin(ctx, 0, y, 0, y + 430, [[0, '#fffaf0'], [1, '#f1e4cc']])); strokeRR(60, y, 600, 430, 44, '#fff', 5);
+      glossy(150, y - 34, 420, 76, 38, PAL.gold); outText('Hoàn thành!', W / 2, y + 2, 40, '#fff', PAL.gold[2]);
+      text(o.name, W / 2, y + 82, 30, '#6a5248', 'center', '800');
+      const left = Math.max(0, cur.timeLeft) / levelTime(cur.i), stars = left >= tune.star3 ? 3 : left >= tune.star2 ? 2 : 1;
+      for (let k = 0; k < 3; k++) { const pop = easeOutBack((u - 0.35 - k * 0.18) / 0.35); if (pop > 0) drawStar(W / 2 + (k - 1) * 112, y + 172 - (k === 1 ? 14 : 0), 44 * pop, k < stars ? '#ffd23f' : '#d8cbb8'); }
+      text(`Còn ${Math.ceil(Math.max(0, cur.timeLeft))} giây${cur.hints ? ` · ${cur.hints} nam châm` : ''}`, W / 2, y + 250, 24, '#8a7366', 'center', '700');
+      ctx.restore();
+      if (cur.t - cur.wonAt >= tune.win_delay) drawButton(BTN.cont, 'Về sảnh', PAL.green, 36, 'cont', 0.02 * Math.sin(state.t * 4));
+    }
   }
   if (failed) { // out of time: only this level is played again
-    const a = Math.min(1, (cur.t - cur.failAt) / 0.4); ctx.globalAlpha = a;
-    ctx.fillStyle = 'rgba(20,10,15,0.5)'; ctx.fillRect(0, 0, W, H);
-    fillRR(70, 810, 580, 430, 40, '#fbf3e6'); strokeRR(70, 810, 580, 430, 40, C.line, 3);
-    text('Hết giờ!', W / 2, 872, 54, C.red, 'center', '800');
-    text(`Đã ghép ${n}/${total} mảnh`, W / 2, 930, 28, C.inkSoft, 'center', '700');
-    if (cur.firstFail) text('Chỉ chơi lại màn này, các vật đã xong vẫn giữ nguyên', W / 2, 972, 20, C.inkSoft, 'center', '700');
-    drawButton(BTN.retry, 'Thử lại', C.gold, 36); drawButton(BTN.hub, 'Về sảnh', C.cream, 30);
-    ctx.globalAlpha = 1;
+    const u = cur.t - cur.failAt, a = easeOutBack(u / 0.5), y = 790 + (1 - a) * 520;
+    ctx.fillStyle = `rgba(20,10,30,${0.5 * Math.min(1, u / 0.4)})`; ctx.fillRect(0, 0, W, H);
+    fillRR(60, y + 10, 600, 460, 44, 'rgba(25,12,45,0.35)'); fillRR(60, y, 600, 460, 44, lin(ctx, 0, y, 0, y + 460, [[0, '#fffaf0'], [1, '#f1e4cc']])); strokeRR(60, y, 600, 460, 44, '#fff', 5);
+    glossy(170, y - 34, 380, 76, 38, PAL.red); outText('Hết giờ!', W / 2, y + 2, 42, '#fff', PAL.red[2]);
+    text(`Đã ghép ${n}/${total} mảnh`, W / 2, y + 86, 28, '#6a5248', 'center', '800');
+    if (cur.firstFail) text('Chỉ chơi lại màn này, các vật đã xong vẫn giữ nguyên', W / 2, y + 130, 20, '#8a7366', 'center', '700');
+    if (u > 0.4) { drawButton(BTN.retry, 'Thử lại', PAL.gold, 38, 'retry'); drawButton(BTN.hub, 'Về sảnh', PAL.blue, 30, 'hub'); }
   }
 }
 
 // ---- Pointer ------------------------------------------------------------------------------------
 function handlePointer(ev) {
-  if (scene !== 'play') { if (ev.k === 'down' && scene === 'title') { reset(); scene = 'play'; } return; }
+  if (scene !== 'play') { if (ev.k === 'down' && scene === 'title') { tapFx('start'); reset(); scene = 'play'; } return; }
   if (state.view === 'hub') {
     if (ev.k !== 'down') return;
-    if (inBtn(BTN.mute, ev)) { setMuted(!muted); return; }
-    if (state.openAt !== null) { if (state.t - state.openAt > 1.5 && inBtn(BTN.play, ev)) goNextArea(); return; }
-    if (inBtn(BTN.play, ev)) { const i = nextObject(); if (i >= 0) { state.kbHub = false; openObject(i); } return; }
-    for (const i of areaObjects(state.area).sort((a, b) => spotOf(b).y - spotOf(a).y)) { const sp = spotOf(i); if (!state.done[i] && Math.abs(ev.x - sp.x) <= sp.s / 2 && ev.y >= sp.y - sp.s && ev.y <= sp.y + 40) { state.kbHub = false; openObject(i); return; } } // front first
+    if (inBtn(BTN.mute, ev)) { tapFx('mute'); setMuted(!muted); return; }
+    if (state.openAt !== null) { if (state.t - state.openAt > 1.5 && inBtn(BTN.play, ev)) { tapFx('play'); goNextArea(); } return; }
+    if (inBtn(BTN.play, ev)) { tapFx('play'); const i = nextObject(); if (i >= 0) { state.kbHub = false; openObject(i); } return; }
+    let i = G3.hubPick(state.area, ev.x, ev.y);
+    if (i < 0) for (const k of areaObjects(state.area)) { const m = ui.marks[k]; if (m && ev.x >= m.x0 && ev.x <= m.x1 && ev.y >= m.y0 && ev.y <= m.y1) i = k; }
+    if (i >= 0 && !state.done[i] && OBJECTS[i].area === state.area) { state.kbHub = false; openObject(i); }
     return;
   }
   const cur = state.cur;
+  if (cur.wonAt !== null) { // finished: a sideways drag turns the 3D object round
+    if (ev.k === 'down') { if (cur.t - cur.wonAt >= tune.win_delay && inBtn(BTN.cont, ev)) { tapFx('cont'); backToHub(); return; } cur.spinAt = ev.x; }
+    else if (ev.k === 'move' && cur.spinAt !== undefined && cur.spinAt !== null) { cur.spin = (cur.spin || 0) + (ev.x - cur.spinAt) * 0.012; cur.spinAt = ev.x; }
+    else if (ev.k === 'up') cur.spinAt = null;
+    return;
+  }
   if (ev.k === 'down') {
-    if (cur.wonAt !== null) { if (cur.t - cur.wonAt >= tune.win_delay && inBtn(BTN.cont, ev)) backToHub(); return; }
-    if (cur.failAt !== null) { if (cur.t - cur.failAt > 0.4) { if (inBtn(BTN.retry, ev)) openObject(cur.i); else if (inBtn(BTN.hub, ev)) backToHub(); } return; }
-    if (inBtn(BTN.back, ev)) { backToHub(); return; }
-    if (inBtn(BTN.hint, ev)) { useHint(); return; }
+    if (cur.wonAt !== null) { if (cur.t - cur.wonAt >= tune.win_delay && inBtn(BTN.cont, ev)) { tapFx('cont'); backToHub(); } return; }
+    if (cur.failAt !== null) { if (cur.t - cur.failAt > 0.4) { if (inBtn(BTN.retry, ev)) { tapFx('retry'); openObject(cur.i); } else if (inBtn(BTN.hub, ev)) { tapFx('hub'); backToHub(); } } return; }
+    if (inBtn(BTN.back, ev)) { tapFx('back'); backToHub(); return; }
+    if (inBtn(BTN.freeze, ev)) { tapFx('freeze'); useFreeze(); return; }
+    if (inBtn(BTN.magnet, ev)) { tapFx('magnet'); useHint(); return; }
     cur.kb = false;
-    for (const p of cur.pz.pieces) {
-      if (p.placed) continue; const sl = cur.tray.slots[p.slot];
-      if (ev.x >= sl.x && ev.x <= sl.x + sl.s && ev.y >= sl.y && ev.y <= sl.y + sl.s) { cur.drag = { p, sx: ev.x, sy: ev.y, x: ev.x, y: ev.y, moved: false }; sfx.pick(); return; }
+    if (inTray(ev)) {
+      const list = unplaced(), idx = Math.floor((ev.x - trayX0()) / TRAY3.pitch + cur.scroll + 1e-6), p = idx >= Math.floor(cur.scroll + 1e-6) && idx < cur.scroll + TRAY3.n ? list[idx] : null;
+      cur.drag = { p, sx: ev.x, sy: ev.y, x: ev.x, y: ev.y, moved: false, mode: null, scroll0: cur.scroll, pos: null };
+      if (p) sfx.pick();
     }
   } else if (ev.k === 'move' && cur.drag) {
-    const d = cur.drag; d.x = ev.x; d.y = ev.y; if (Math.hypot(d.x - d.sx, d.y - d.sy) > tune.tap_slop) d.moved = true;
+    const d = cur.drag; d.x = ev.x; d.y = ev.y;
+    const dx = d.x - d.sx, dy = d.y - d.sy;
+    if (!d.mode && Math.hypot(dx, dy) > tune.tap_slop) d.mode = !d.p || Math.abs(dx) > Math.abs(dy) * 1.2 ? 'scroll' : 'piece';
+    if (d.mode === 'scroll') cur.scroll = Math.max(-0.4, Math.min(scrollMax() + 0.4, d.scroll0 - dx / TRAY3.pitch));
+    if (d.mode === 'piece') { d.moved = true; d.pos = G3.screenToBoard(d.x, d.y - tune.drag_lift); }
   } else if (ev.k === 'up' && cur.drag) {
     const d = cur.drag; cur.drag = null;
+    if (d.mode === 'scroll') { const v = (d.scroll0 - (ev.x - d.sx) / TRAY3.pitch); cur.scroll = Math.max(0, Math.min(scrollMax(), Math.round(v))); sfx.pick(); return; }
     if (!d.moved || cur.wonAt !== null || cur.failAt !== null) return;
-    const q = dragPos(d), mx = q.x + d.p.part.w * BS / 2, my = q.y + d.p.part.h * BS / 2;
-    if (mx < BOARD.x - 40 || mx > BOARD.x + BOARD.s + 40 || my < BOARD.y - 40 || my > BOARD.y + BOARD.s + 10) { sfx.pick(); return; } // let go off the shadow: back to the tray quietly
-    tryDrop(d.p, q.x, q.y);
+    const q = G3.screenToBoard(ev.x, ev.y - tune.drag_lift);
+    if (inTray(ev) || !q || Math.hypot(q.x - BOARD.s / 2, q.y - BOARD.s / 2) > BOARD.s * 0.7) { sfx.pick(); return; } // let go off the board: back to the tray quietly
+    tryDrop(d.p, q.x - d.p.part.w * BS / 2, q.y - d.p.part.h * BS / 2);
   }
 }
 
@@ -1549,15 +1199,17 @@ function keyboard(dt) {
   if (cur.failAt !== null) { if (cur.t - cur.failAt > 0.4) { if (pressed('Enter') || pressed('Space')) openObject(cur.i); else if (pressed('Escape')) backToHub(); } return; }
   if (pressed('Escape')) { backToHub(); return; }
   if (pressed('KeyH')) useHint();
+  if (pressed('KeyF')) useFreeze();
   if (cur.wonAt !== null) return;
   const list = unplaced(); if (!list.length) return;
   if (cur.sel >= list.length) cur.sel = 0;
   if (pressed('KeyE') || pressed('Tab')) { cur.sel = (cur.sel + 1) % list.length; cur.kb = true; }
   if (pressed('KeyQ')) { cur.sel = (cur.sel - 1 + list.length) % list.length; cur.kb = true; }
+  if (cur.kb) { if (cur.sel < cur.scroll) cur.scroll = cur.sel; if (cur.sel >= cur.scroll + TRAY3.n) cur.scroll = cur.sel - TRAY3.n + 1; } // keep the chosen piece in sight
   for (const [k, dx, dy] of [['ArrowLeft', -1, 0], ['ArrowRight', 1, 0], ['ArrowUp', 0, -1], ['ArrowDown', 0, 1]]) if (down.has(k) || pressed(k)) {
     cur.kb = true;
-    cur.cursor.x = Math.max(BOARD.x, Math.min(BOARD.x + BOARD.s, cur.cursor.x + dx * tune.key_speed * dt));
-    cur.cursor.y = Math.max(BOARD.y, Math.min(BOARD.y + BOARD.s, cur.cursor.y + dy * tune.key_speed * dt));
+    cur.cursor.x = Math.max(0, Math.min(BOARD.s, cur.cursor.x + dx * tune.key_speed * dt));
+    cur.cursor.y = Math.max(0, Math.min(BOARD.s, cur.cursor.y + dy * tune.key_speed * dt));
   }
   if (cur.kb && pressed('Space')) { const p = list[cur.sel]; tryDrop(p, cur.cursor.x - p.part.w * BS / 2, cur.cursor.y - p.part.h * BS / 2); }
 }
@@ -1586,26 +1238,26 @@ const scenes = {
       });
     },
   },
-  figures: {
+  figures: { // every object as its 3D toy, each named
     update(dt) { state.t += dt; },
     draw() {
-      drawHall(0); ctx.fillStyle = 'rgba(248,238,222,0.8)'; ctx.fillRect(0, 0, W, H); text('Hiện vật', W / 2, 60, 40, C.ink, 'center', '800');
-      OBJECTS.forEach((o, i) => { const x = 10 + (i % 3) * 236, y = 96 + Math.floor(i / 3) * 196, tk = ARTS[i].thick, s = 160; ctx.drawImage(tk, x + 38, y, tk.width * s / ART_N, tk.height * s / ART_N); text(o.name, x + 118, y + 172, 18, C.ink); });
-      drawVisitor(640, 1250, 0.6, '#5f9fd6', '#3d2a20', state.t * 6);
+      const labels = G3.renderFigures(state.t);
+      outText('Hiện vật', W / 2, 56, 44, '#fff', '#3a2357');
+      for (const l of labels) text(OBJECTS[l.i].name, l.x, l.y, 20, C.ink, 'center', '800');
     },
   },
   title: {
     update(dt) { state.t += dt; if (pressed('Enter') || pressed('Space')) { reset(); scene = 'play'; } },
-    draw() {
-      drawHall(0.3, 6); ctx.fillStyle = 'rgba(248,238,222,0.78)'; ctx.fillRect(0, 0, W, H);
-      text('Shadow', W / 2, 150, 88, C.ink, 'center', '800'); text('Museum', W / 2, 240, 88, C.ink, 'center', '800');
-      text('Ghép bộ phận để hiện vật thể', W / 2, 310, 30, C.inkSoft, 'center', '700');
-      const sw = 200 + Math.sin(state.t * 1.4) * 4;
-      ctx.drawImage(ARTS[0].sil, 110, 370, sw, sw); { const tk = ARTS[0].thick; ctx.drawImage(tk, 410, 370, tk.width * 200 / ART_N, tk.height * 200 / ART_N); }
-      ctx.save(); ctx.beginPath(); ctx.moveTo(320, 470); ctx.lineTo(400, 470); stroke(ctx, C.inkSoft, 6); ctx.beginPath(); ctx.moveTo(385, 455); ctx.lineTo(400, 470); ctx.lineTo(385, 485); stroke(ctx, C.inkSoft, 6); ctx.restore();
-      drawPedestal(130, 566, 160, false); drawPedestal(430, 566, 160, true);
-      CONTROLS.forEach((c, i) => text(c, W / 2, 760 + i * 52, 26, C.ink, 'center', '600'));
-      drawButton(BTN.start, 'Vào bảo tàng', C.gold, 36);
+    draw(dt) {
+      G3.renderHub(0, { done: OBJECTS.map(() => true), lit: 0.6, t: state.t, next: -1, visitors: [], since: state.t }, dt);
+      ctx.fillStyle = lin(ctx, 0, 0, 0, H, [[0, 'rgba(30,18,50,0.65)'], [0.35, 'rgba(30,18,50,0.15)'], [0.7, 'rgba(30,18,50,0.2)'], [1, 'rgba(30,18,50,0.8)']]); ctx.fillRect(0, 0, W, H);
+      const k1 = easeOutBack(state.t / 0.6), k2 = easeOutBack((state.t - 0.15) / 0.6);
+      ctx.save(); scaleAbout(W / 2, 150, k1); outText('Shadow', W / 2, 150 + Math.sin(state.t * 2) * 4, 104, '#fff', '#5a35ab'); ctx.restore();
+      ctx.save(); scaleAbout(W / 2, 255, k2); outText('Museum', W / 2, 255 + Math.sin(state.t * 2 + 1) * 4, 104, PAL.gold[0], '#5a35ab'); ctx.restore();
+      outText('Ghép mảnh vào bóng đen để vật hiện ra', W / 2, 340, 28, '#fff', '#3a2357', '800');
+      fillRR(40, 800, 640, 250, 30, 'rgba(30,18,50,0.6)'); strokeRR(40, 800, 640, 250, 30, 'rgba(255,255,255,0.5)', 3);
+      CONTROLS.forEach((c, i) => text(c, W / 2, 836 + i * 44, 21, '#fff8ec', 'center', '700'));
+      drawButton(BTN.start, 'Vào bảo tàng', PAL.green, 40, 'start', 0.03 * Math.sin(state.t * 4));
     },
   },
   play: {
@@ -1613,10 +1265,14 @@ const scenes = {
       state.t += dt;
       while (ptrQ.length) handlePointer(ptrQ.shift());
       keyboard(dt);
-      if (state.view === 'puzzle' && state.cur) { state.cur.t += dt; runClock(dt); }
+      const cur = state.cur;
+      if (state.view === 'puzzle' && cur) {
+        cur.t += dt; runClock(dt);
+        if (!(cur.drag && cur.drag.mode === 'scroll')) { const m = scrollMax(); if (cur.scroll > m) cur.scroll = m; if (cur.scroll < 0) cur.scroll = 0; }
+      }
       for (const v of state.visitors) { v.x += v.v * dt; if (v.x > W + 60) v.x = -60; }
     },
-    draw() { if (state.view === 'hub') drawHub(); else drawPuzzle(); },
+    draw(dt) { if (state.view === 'hub') drawHub(dt); else drawPuzzle(dt); },
   },
 };
 
@@ -1628,7 +1284,17 @@ function step() {
 }
 let last, acc = 0, ALPHA = 1;
 function tick() { const now = clock.now(); acc += Math.min(now - last, 0.25); last = now; while (acc >= STEP) { step(); acc -= STEP; } ALPHA = acc / STEP; drawFrame(); }
-function drawFrame() { scenes[scene].draw(); }
+// Each frame: the scene draws its 3D world and its HUD; a change of screen opens with a round reveal.
+let viewKey = '', irisAt = -9, lastDraw = null;
+function drawFrame() {
+  const now = clock.now(), dt = lastDraw === null ? STEP : Math.min(0.05, Math.max(0, now - lastDraw)); lastDraw = now;
+  ctx.clearRect(0, 0, W, H);
+  const key = scene + '|' + (state.view || '') + state.area;
+  if (key !== viewKey) { if (viewKey) irisAt = now; viewKey = key; }
+  scenes[scene].draw(dt || STEP);
+  const u = (now - irisAt) / 0.55;
+  if (u < 1) { const r = easeOut(u) * 820; ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.arc(W / 2, H * 0.48, Math.max(0.1, r), 0, Math.PI * 2); ctx.fillStyle = '#2b2140'; ctx.fill('evenodd'); }
+}
 function frame() { tick(); requestAnimationFrame(frame); }
 function timer() { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
 
@@ -1641,6 +1307,7 @@ window.game = {
   step(n = 1, draw = true, alpha = 1) { for (let i = 0; i < n; i++) step(); if (draw) { ALPHA = alpha; drawFrame(); } },
 };
 
+G3.init(glCanvas); fit();
 reset();
 scene = params.get('scene') || 'title';
 last = clock.now();
