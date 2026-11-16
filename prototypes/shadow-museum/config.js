@@ -1,34 +1,63 @@
 // PROTOTYPE - NOT FOR PRODUCTION
-// Question: Kéo khối có hình vào bóng đen với đồng hồ đếm ngược có đủ vui để làm hết 6 vật không?
+// Question: Kéo từng bộ phận của vật thể vào bóng đen cho nó hiện ra có đủ vui để làm hết 6 vật không?
 // Date: 2026-11-16
 // Every tuning value lives here, each with value, min, max and step. The game reads them live
 // through tune.<name> (index.html).
 window.CONFIG = {
   seed: 7, // every gameplay random call reads rng(), seeded from this (or ?seed= in the address)
   volume: { value: 0.5, min: 0, max: 1, step: 0.05 },
-  time_1: { value: 60, min: 10, max: 240, step: 5 },   // s to finish object 1
-  time_2: { value: 60, min: 10, max: 240, step: 5 },   // s to finish object 2
-  time_3: { value: 75, min: 10, max: 240, step: 5 },   // s to finish object 3
-  time_4: { value: 75, min: 10, max: 240, step: 5 },   // s to finish object 4
-  time_5: { value: 90, min: 10, max: 240, step: 5 },   // s to finish object 5
-  time_6: { value: 90, min: 10, max: 240, step: 5 },   // s to finish object 6
-  warn_time: { value: 10, min: 0, max: 30, step: 1 },  // s left when the clock turns red and ticks
-  hint_cost: { value: 5, min: 0, max: 30, step: 1 },   // s taken off the clock per hint
-  snap_reach: { value: 0.55, min: 0.2, max: 1.5, step: 0.05 }, // cells: how far off its true spot a drop still snaps
-  tap_slop: { value: 12, min: 4, max: 40, step: 1 },   // px: a press moving less than this is a tap
-  tray_cell_max: { value: 40, min: 16, max: 60, step: 1 }, // px: largest cell size in the tray (shrinks to fit)
+  snap_dist: { value: 60, min: 10, max: 200, step: 5 },    // px: how far from its true spot a dropped part still snaps in
+  drag_lift: { value: 40, min: 0, max: 160, step: 5 },     // px: how far above the finger a dragged part rides
+  tray_card_max: { value: 150, min: 80, max: 200, step: 2 }, // px: largest card in the tray (shrinks to fit)
+  thumb_zoom_max: { value: 2, min: 1, max: 4, step: 0.1 }, // x: how much a small part may be enlarged on its card
+  key_speed: { value: 260, min: 60, max: 800, step: 20 },  // px/s: how fast the arrows move a part
+  tap_slop: { value: 12, min: 4, max: 40, step: 1 },       // px: a press moving less than this is a tap
   win_delay: { value: 1.4, min: 0, max: 4, step: 0.1 },    // s of the glow before "back to the museum" shows
-  min_cover: { value: 0.005, min: 0.001, max: 0.5, step: 0.001 }, // share of a cell the object must cover for the cell to be part of its shadow
+  whimsy_size: { value: 0.8, min: 0.4, max: 1.2, step: 0.05 },   // shaped pieces (cat, fish, bird, heart): size as a share of a cell
+  piece_depth: { value: 12, min: 0, max: 28, step: 1 },          // art px: how thick pieces and objects stand, like toy blocks
+  jigsaw_jitter: { value: 0.2, min: 0, max: 0.35, step: 0.01 },  // share of a cell the cut's inner corners wander, so pieces differ in shape
+  jigsaw_min: { value: 0.18, min: 0, max: 0.6, step: 0.02 },    // share of a cell's area below which a sliver of picture joins its neighbour
+  time_scale: { value: 1, min: 0.5, max: 2, step: 0.05 },        // x: every level's time is its OBJECTS time times this
+  warn_time: { value: 10, min: 0, max: 30, step: 1 },            // s left when the clock turns red and ticks
+  hint_cost: { value: 5, min: 0, max: 30, step: 1 },             // s taken off the clock per hint
+  intro_hold: { value: 2.5, min: 0, max: 6, step: 0.5 },         // s the clock waits while a tip for a new thing is shown
+  star3: { value: 0.45, min: 0.1, max: 0.9, step: 0.05 },        // share of the time left for 3 stars
+  star2: { value: 0.2, min: 0, max: 0.8, step: 0.05 },           // share of the time left for 2 stars
 };
 
-// The six objects, easiest first. grid: cells across the object's square; pieces: how many
-// blocks it is cut into; cut: 'bands' (straight strips), 'compact' (L/T/Z-like), 'wild' (odd
-// shapes); decoys: extra blocks from another object that belong nowhere.
+// The scenes, played in order: finish all six of one to open the next.
+window.AREAS = [
+  { key: 'museum',  name: 'Bảo tàng Bóng',     done: 'Bảo tàng mở cửa!' },
+  { key: 'kitchen', name: 'Căn bếp ấm cúng',   done: 'Căn bếp đã ấm cúng!' },
+  { key: 'park',    name: 'Công viên Thành phố', done: 'Công viên đông vui!' },
+];
+
+// The levels, in order: six per scene (area: its index in AREAS). time: seconds to finish.
+// cut: 'parts' hands out the object's own parts (index.html, ART:
+// 3, 4, 5 parts, the colour-line cut); 'shapes' cuts the whole picture. style picks how:
+//   on a cols x rows grid: 'kinked' (straight with bends), 'wave', 'zigzag', 'mixed' (each line its own kind);
+//   by piece count (pieces): 'mosaic' (random cut, mixed sizes), 'amoeba' (organic blobs),
+//   'swirl' (curling scroll lines), 'ribbon' (wavy strips), 'fan' (wedges round a centre).
+// ?cut=<style> in the address sets it for all; ?scene=cuts shows every style side by side.
+// whimsy: shaped pieces (cat, fish, bird, heart) cut out of the middle, grid styles only.
+// decoys: pieces from another object that belong nowhere.
 window.OBJECTS = [
-  { art: 'bust',    name: 'Tượng bán thân',     grid: 5,  pieces: 3,  cut: 'bands',   decoys: 0 },
-  { art: 'amphora', name: 'Bình gốm cổ',        grid: 6,  pieces: 4,  cut: 'bands',   decoys: 0 },
-  { art: 'helmet',  name: 'Mũ giáp hiệp sĩ',    grid: 7,  pieces: 6,  cut: 'compact', decoys: 0 },
-  { art: 'skull',   name: 'Sọ khủng long',      grid: 8,  pieces: 8,  cut: 'compact', decoys: 0 },
-  { art: 'harp',    name: 'Đàn hạc vàng',       grid: 9,  pieces: 10, cut: 'wild',    decoys: 1 },
-  { art: 'cat',     name: 'Tượng mèo Ai Cập',   grid: 10, pieces: 12, cut: 'wild',    decoys: 2 },
+  { area: 0, art: 'bust',      name: 'Tượng bán thân',    time: 30, cut: 'parts',  decoys: 0 },
+  { area: 0, art: 'amphora',   name: 'Bình gốm cổ',       time: 30, cut: 'parts',  decoys: 0 },
+  { area: 0, art: 'helmet',    name: 'Mũ giáp hiệp sĩ',   time: 35, cut: 'parts',  decoys: 0 },
+  { area: 0, art: 'globe',     name: 'Quả địa cầu cổ',    time: 60, cut: 'shapes', pieces: 9,  style: 'mosaic', decoys: 0 },
+  { area: 0, art: 'crown',     name: 'Vương miện',        time: 65, cut: 'shapes', pieces: 10, style: 'swirl',  decoys: 0 },
+  { area: 0, art: 'cat',       name: 'Tượng mèo Ai Cập',  time: 70, cut: 'shapes', cols: 3, rows: 5, style: 'mixed', whimsy: 3, decoys: 0 },
+  { area: 1, art: 'teapot',    name: 'Ấm trà hoa',        time: 35, cut: 'parts',  decoys: 0 },
+  { area: 1, art: 'cookiejar', name: 'Lọ bánh quy',       time: 55, cut: 'shapes', pieces: 10, style: 'ribbon', decoys: 0 },
+  { area: 1, art: 'mixer',     name: 'Máy trộn bột',      time: 60, cut: 'shapes', pieces: 11, style: 'amoeba', decoys: 0 },
+  { area: 1, art: 'coffee',    name: 'Máy pha cà phê',    time: 60, cut: 'shapes', pieces: 11, style: 'fan',    decoys: 0 },
+  { area: 1, art: 'pie',       name: 'Bánh táo',          time: 60, cut: 'shapes', pieces: 12, style: 'mosaic', decoys: 0 },
+  { area: 1, art: 'cake',      name: 'Bánh kem dâu',      time: 70, cut: 'shapes', cols: 3, rows: 4, style: 'zigzag', whimsy: 2, decoys: 0 },
+  { area: 2, art: 'bench',     name: 'Ghế công viên',     time: 30, cut: 'parts',  decoys: 0 },
+  { area: 2, art: 'lamp',      name: 'Đèn đường cổ',      time: 55, cut: 'shapes', cols: 3, rows: 4, style: 'kinked', whimsy: 0, decoys: 0 },
+  { area: 2, art: 'picnic',    name: 'Giỏ picnic',        time: 60, cut: 'shapes', pieces: 12, style: 'swirl',  decoys: 0 },
+  { area: 2, art: 'bicycle',   name: 'Xe đạp',            time: 65, cut: 'shapes', pieces: 13, style: 'amoeba', decoys: 0 },
+  { area: 2, art: 'fountain',  name: 'Đài phun nước',     time: 70, cut: 'shapes', cols: 3, rows: 4, style: 'wave', whimsy: 2, decoys: 0 },
+  { area: 2, art: 'cart',      name: 'Xe bán kem',        time: 80, cut: 'shapes', cols: 4, rows: 4, style: 'mixed', whimsy: 3, decoys: 0 },
 ];
