@@ -18,6 +18,12 @@ Each agent owns a specific domain, enforcing separation of concerns and quality.
 
 @.claude/docs/directory-structure.md
 
+## Current Game
+
+The game being worked on is `prototypes/shadow-museum/` (browser, three.js). Before reading its
+code, read `prototypes/shadow-museum/CODEMAP.md`: it maps every file, section and key function, so
+open only the part a change needs. Update CODEMAP in the same commit as any change it describes.
+
 ## Engine Version Reference
 
 <!-- ENGINE-REFERENCE-IMPORT: the line under this comment is engine-specific,
