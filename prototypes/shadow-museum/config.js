@@ -20,6 +20,8 @@ window.CONFIG = {
   lift_height: { value: 70, min: 10, max: 200, step: 5 },          // world units: how high a dragged piece floats over the board
   jigsaw_jitter: { value: 0.2, min: 0, max: 0.35, step: 0.01 },  // share of a cell the cut's inner corners wander, so pieces differ in shape
   jigsaw_min: { value: 0.18, min: 0, max: 0.6, step: 0.02 },    // share of a cell's area below which a sliver of picture joins its neighbour
+  island_min: { value: 300, min: 0, max: 600, step: 10 },          // art px: a bit of a piece at least this big becomes its own piece; smaller specks stay with the biggest
+  island_share: { value: 0.1, min: 0, max: 1, step: 0.05 },      // ...and at least this share of the piece's biggest bit, so specks like rivets stay attached
   time_scale: { value: 1, min: 0.5, max: 2, step: 0.05 },        // x: every level's time is its OBJECTS time times this
   warn_time: { value: 10, min: 0, max: 30, step: 1 },            // s left when the clock turns red and ticks
   hint_cost: { value: 5, min: 0, max: 30, step: 1 },             // s taken off the clock per hint
@@ -56,7 +58,7 @@ window.OBJECTS = [
   { area: 1, art: 'teapot',    name: 'Ấm trà hoa',        time: 35, cut: 'parts',  decoys: 0 },
   { area: 1, art: 'cookiejar', name: 'Lọ bánh quy',       time: 55, cut: 'shapes', pieces: 10, style: 'ribbon', decoys: 0 },
   { area: 1, art: 'mixer',     name: 'Máy trộn bột',      time: 60, cut: 'shapes', pieces: 11, style: 'amoeba', decoys: 0 },
-  { area: 1, art: 'coffee',    name: 'Máy pha cà phê',    time: 60, cut: 'shapes', pieces: 11, style: 'fan',    decoys: 0 },
+  { area: 1, art: 'toaster',   name: 'Máy nướng bánh mì', time: 60, cut: 'shapes', pieces: 11, style: 'fan',    decoys: 0 },
   { area: 1, art: 'pie',       name: 'Bánh táo',          time: 60, cut: 'shapes', pieces: 12, style: 'mosaic', decoys: 0 },
   { area: 1, art: 'cake',      name: 'Bánh kem dâu',      time: 70, cut: 'shapes', cols: 3, rows: 4, style: 'zigzag', whimsy: 2, decoys: 0 },
   { area: 2, art: 'bench',     name: 'Ghế công viên',     time: 30, cut: 'parts',  decoys: 0 },

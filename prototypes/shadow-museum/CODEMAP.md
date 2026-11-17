@@ -16,12 +16,13 @@ words, in order). Every change so far: `evidence/changes.tsv` and `git log -- pr
 |---|---|---|
 | `index.html` | ~100 KB | Rules, state, 2D art of the 18 objects, cutting into pieces, HUD (2D canvas on top), input, scenes, loop |
 | `world.js` | ~58 KB | Everything 3D (three.js, the canvas underneath): pieces and objects as meshes, the puzzle set, the 3 hub rooms. Draws only; holds no rules |
+| `models.js` | ~25 KB | `MODELS`: one builder per object (`OBJECTS[i].art`) that makes its real 3D model from three.js shapes, ~100 units tall, standing on y = 0. Kit at the top: `turn` (lathe), `tube`, `ring`, `box`, `cyl`, `ball`, `cone`, textures (amphora band, globe map, flowers, gingham, wicker, label, stripes) |
 | `config.js` | ~6 KB | `window.CONFIG` (every tuning value: value/min/max/step), `AREAS` (3 scenes), `OBJECTS` (18 levels: area, art, name, time, cut style, pieces) |
 | `vendor/three.js` | 2.1 MB | three.js 0.186.1, core + module joined into one classic script (`window.THREE`) so the game plays from a double-click. Never read it |
 | `brief.md` | | The game brief (copy of `design/game-brief.md`) |
 | `evidence/` | | Screenshots from runs, `changes.tsv` |
 
-Load order in `index.html`: `vendor/three.js` → `config.js` → `world.js` (defines `G3`) → the inline game
+Load order in `index.html`: `vendor/three.js` → `config.js` → `models.js` → `world.js` (defines `G3`) → the inline game
 script. Classic scripts share top-level `const`s, so `world.js` reads `state`, `tune`, `ARTS`, `BOARD`,
 `BS`, `TRAY3`, `BOARD3`, `W`, `H`, `CHEAP`, `makeCanvas`, `alphaBox`, `areaObjects` at call time.
 
@@ -39,6 +40,8 @@ script. Classic scripts share top-level `const`s, so `world.js` reads `state`, `
 - **Cutting**: `buildParts` (cut by the object's own parts), `jigsawCut` (grid with `kinked/wave/zigzag/mixed`
   edges + `WHIMSY` animal pieces), `labelCut` (`mosaic/amoeba/swirl/ribbon/fan`), `cutPicture` picks.
   `thicken`/`hollow` are 2D fake depth, now used only by the `?scene=cuts` gallery.
+- **`splitIslands(parts)`**: a piece whose picture falls into separate bits becomes one piece per bit
+  (bits under `tune.island_min` px or `tune.island_share` of the biggest stay attached, e.g. rivets).
 - **`buildArt(i)` / `ARTS[i]`**: lazily `{ parts, img, sil }` — pieces (`{cv,x,y,w,h}` in art px), the
   whole picture, the black silhouette. world.js caches 3D data on these objects.
 - **A puzzle**: `BOARD = {s:600}` board space (px, origin top-left of the 480 art square at `BS` = 1.25);
@@ -70,10 +73,13 @@ script. Classic scripts share top-level `const`s, so `world.js` reads `state`, `
   (depth parity = hole or solid) → `shapesFrom` (THREE.Shape with holes).
 - **`block(cv, depthArt)`**: a piece as an extruded, bevelled toy block (face = picture, sides = darker
   average colour). Cached on the canvas.
-- **`solidModel(i)`**: the finished object as a real round 3D solid: distance transform of the
+- **`objectModel(i)`**: the object's real 3D model from `MODELS` (models.js), cloned from a cached
+  prototype, sized to `artBox(i)` (the picture's box): `userData.h/w/d` in art px, bottom at y = 0.
+  `setSil(g, on)` swaps every mesh to the dark `SIL` material for unfinished hub objects.
+- **`solidModel(i)`** (fallback when an object has no builder): the picture inflated into a round 3D solid: distance transform of the
   silhouette, union of inscribed balls gives the depth (disc → ball, strip → tube), front/back surfaces
   on a 4 px grid, texture projected from the front with lookups pulled inside the outline. `tune.inflate`
-  scales the depth. Used by the puzzle finish, the hubs and figures. `SIL` = dark silhouette material.
+  scales the depth. `SIL` = dark silhouette material.
 - **Shapes for the set**: `rbox` (rounded box), `cyl sph plane floorPlane put shade lights plant tree person`.
 - **The puzzle**: constants `BOARD_R SLAB HOLLOW`, per-scene colours `PZ_LOOK`.
   The board stands upright: everything board-related lives in `PZ.frame` (rotated +90° about X), where
@@ -82,7 +88,7 @@ script. Classic scripts share top-level `const`s, so `world.js` reads `state`, `
   the board. `buildPuzzleSet` (wall, floor, wall decor, board plate + rim + hollow, foot, tray bar),
   `fitPuzzleCam` (fits `BOARD3` with `tune.cam_tilt`), `boardMesh(i)` (board with the silhouette cut
   out), `pieceVis` / `trayTarget` / `homeWorld`, `openPuzzle`, **`renderPuzzle(dt)`** (intro, shake,
-  win puff + spin of `PZ.model`, per-piece spring towards tray / drag / home, tutorial ghost),
+  win: `PZ.model` (objectModel) puffs up from flat, comes forward and spins (`cur.spin` adds drag), per-piece spring towards tray / drag / home, tutorial ghost),
   `screenToBoard`, `boardToScreen`, `pieceScreen`.
 - **The hubs**: `HUB_SPOTS` (per scene: x,z on the floor, y top of stand, s size, stand type),
   `HUB_CAM`, `buildMuseum / buildKitchen / buildPark` (room + decor list `[needCount, mesh]`),

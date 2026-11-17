@@ -18,6 +18,7 @@
 <div id="wrap"><canvas id="gl"></canvas><canvas id="game"></canvas></div>
 <script src="vendor/three.js"></script>
 <script src="config.js"></script>
+<script src="models.js"></script>
 <script src="world.js"></script>
 <script>
 'use strict';
@@ -368,25 +369,27 @@ const ART = {
       ellipse(g, 376, 178, 11, 11, 0, '#fbf3e6'); ellipse(g, 220, 146, 60, 12, -0.08, 'rgba(255,255,255,0.45)');
     },
   ],
-  coffee: [
-    g => { rr(g, 108, 398, 252, 48, 14); g.fillStyle = lin(g, 0, 398, 0, 446, [[0, '#4a4a52'], [1, '#26262c']]); g.fill(); ellipse(g, 196, 402, 72, 9, 0, '#18181c'); }, // base
-    g => { // tower and hood with buttons
-      rr(g, 284, 108, 88, 302, 20); g.fillStyle = lin(g, 284, 0, 372, 0, [[0, '#2b2b31'], [0.45, '#5a5a64'], [1, '#202024']]); g.fill();
-      rr(g, 104, 102, 268, 78, 24); g.fillStyle = lin(g, 0, 102, 0, 180, [[0, '#62626c'], [1, '#2b2b31']]); g.fill();
-      ellipse(g, 328, 246, 9, 9, 0, '#e0574f'); ellipse(g, 328, 278, 9, 9, 0, '#5f9fd6'); rr(g, 306, 302, 44, 10, 4); g.fillStyle = '#8a8a96'; g.fill();
-      ellipse(g, 180, 124, 60, 8, 0, 'rgba(255,255,255,0.18)');
+  toaster: [
+    g => { // two slices of toast popping up
+      for (const x of [150, 254]) {
+        rr(g, x, 96, 90, 120, 26); g.fillStyle = '#c98a4a'; g.fill();
+        rr(g, x + 9, 106, 72, 104, 20); g.fillStyle = lin(g, 0, 106, 0, 210, [[0, '#f6dba6'], [1, '#e9bf78']]); g.fill();
+        ellipse(g, x + 30, 132, 6, 4, 0.4, 'rgba(201,138,74,0.45)'); ellipse(g, x + 58, 160, 5, 3, -0.3, 'rgba(201,138,74,0.45)');
+      }
     },
-    g => { g.beginPath(); g.moveTo(258, 270); g.bezierCurveTo(302, 270, 302, 362, 262, 374); stroke(g, '#26262c', 14); }, // carafe handle
-    g => { // glass carafe with coffee
-      const pot = new Path2D(); pot.moveTo(140, 236); pot.lineTo(250, 236); pot.lineTo(258, 262); pot.bezierCurveTo(290, 302, 290, 380, 262, 402); pot.lineTo(128, 402); pot.bezierCurveTo(100, 380, 100, 302, 132, 262); pot.closePath();
-      g.fillStyle = '#e3eef2'; g.fill(pot);
-      g.save(); g.clip(pot); g.fillStyle = lin(g, 0, 312, 0, 402, [[0, '#7a4a2a'], [1, '#3e2414']]); g.fillRect(90, 312, 220, 100); g.restore();
-      g.beginPath(); g.moveTo(130, 290); g.quadraticCurveTo(120, 340, 138, 380); stroke(g, 'rgba(255,255,255,0.75)', 6);
-      rr(g, 132, 222, 126, 20, 6); g.fillStyle = '#26262c'; g.fill();
+    g => { // the retro body
+      rr(g, 96, 182, 290, 222, 70); g.fillStyle = lin(g, 96, 0, 386, 0, [[0, '#a93b31'], [0.3, '#f0786a'], [0.55, '#e0574f'], [1, '#9a3029']]); g.fill();
+      ellipse(g, 180, 216, 60, 10, 0, 'rgba(255,255,255,0.35)');
+      rr(g, 140, 186, 82, 14, 7); g.fillStyle = '#3a1e18'; g.fill(); rr(g, 260, 186, 82, 14, 7); g.fill();
     },
-    g => { // red mug
-      rr(g, 372, 358, 70, 82, 12); g.fillStyle = lin(g, 372, 0, 442, 0, [[0, '#a93b31'], [0.4, '#f0786a'], [1, '#a93b31']]); g.fill();
-      g.beginPath(); g.arc(446, 398, 18, -1.3, 1.3); stroke(g, '#c0392b', 10); ellipse(g, 407, 360, 35, 8, 0, '#4a2a16');
+    g => { // the chrome band and the browning dial
+      rr(g, 96, 286, 290, 34, 10); g.fillStyle = lin(g, 0, 286, 0, 320, [[0, '#f4f7fa'], [0.5, '#a9b3bc'], [1, '#e3e8ec']]); g.fill();
+      ellipse(g, 240, 360, 24, 24, 0, '#fbf3e6'); ellipse(g, 240, 360, 24, 24, 0, 'rgba(0,0,0,0)');
+      g.beginPath(); g.arc(240, 360, 24, 0, 7); stroke(g, '#c9b393', 4); g.beginPath(); g.moveTo(240, 360); g.lineTo(252, 346); stroke(g, '#3a2357', 5);
+    },
+    g => { // the lever on the side and the feet
+      rr(g, 384, 220, 34, 14, 6); g.fillStyle = '#2b2b31'; g.fill(); rr(g, 408, 210, 26, 34, 10); g.fillStyle = lin(g, 0, 210, 0, 244, [[0, '#f4f7fa'], [1, '#8f9aa4']]); g.fill();
+      for (const x of [126, 322]) { rr(g, x, 398, 34, 22, 8); g.fillStyle = '#26262c'; g.fill(); }
     },
   ],
   pie: [
@@ -765,12 +768,52 @@ function hollow(sil) { // the shadow as a hollow pressed into the board: dark li
   g.drawImage(sil, 0, 0); g.globalAlpha = 0.85; g.drawImage(rimOf(sil, 6, 8, '#000000'), 0, 0);
   g.globalAlpha = 0.22; g.drawImage(rimOf(sil, -4, -5, '#ffe7c4'), 0, 0); return c;
 }
+// A piece whose picture falls apart into separate islands (two handles drawn as one part, or a cut
+// that left two bits apart) becomes one piece per island. Specks smaller than tune.island_min art px,
+// or than tune.island_share of the biggest island (rivets, dots), stay with the biggest island. Order is kept, so parts still stack back to front.
+function splitIslands(parts) {
+  const out = [];
+  for (const p of parts) {
+    const w = p.cv.width, h = p.cv.height, d = p.cv.getContext('2d').getImageData(0, 0, w, h).data, lab = new Int32Array(w * h).fill(-1), sizes = [], stack = new Int32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      if (lab[i] >= 0 || d[i * 4 + 3] <= 20) continue;
+      const id = sizes.length; let n = 0, sp = 0; stack[sp++] = i; lab[i] = id;
+      while (sp) {
+        const j = stack[--sp], x = j % w, y = (j / w) | 0; n++;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const k = ny * w + nx; if (lab[k] < 0 && d[k * 4 + 3] > 20) { lab[k] = id; stack[sp++] = k; }
+        }
+      }
+      sizes.push(n);
+    }
+    const big = sizes.map((_, k) => k).filter(k => sizes[k] >= tune.island_min);
+    const top = Math.max(...sizes), big2 = big.filter(k => sizes[k] >= top * tune.island_share); // a bit far smaller than the main one (a rivet) stays with it
+  if (big2.length < 2) { out.push(p); continue; }
+  big.length = 0; big.push(...big2);
+
+    const main = big.reduce((a, b) => (sizes[a] >= sizes[b] ? a : b)), owner = id => (big.includes(id) ? id : main);
+    for (const id of big) {
+      let x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (let i = 0; i < w * h; i++) if (lab[i] >= 0 && owner(lab[i]) === id) { const x = i % w, y = (i / w) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      const cw = x1 - x0 + 1, ch = y1 - y0 + 1, cv = makeCanvas(cw, ch), g = cv.getContext('2d'), im = g.createImageData(cw, ch);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const i = y * w + x; if (lab[i] < 0 || owner(lab[i]) !== id) continue;
+        const q = ((y - y0) * cw + (x - x0)) * 4; for (let c = 0; c < 4; c++) im.data[q + c] = d[i * 4 + c];
+      }
+      g.putImageData(im, 0, 0);
+      out.push({ cv, x: p.x + x0, y: p.y + y0, w: cw, h: ch });
+    }
+  }
+  out.forEach((q, k) => { q.k = k; });
+  return out;
+}
 function buildArt(i) { // an object picture, its cut pieces and its shadow (world.js makes them 3D)
   const o = OBJECTS[i], keep = seed;
   const layers = buildParts(o);
   const img = makeCanvas(ART_N, ART_N), g = img.getContext('2d', { willReadFrequently: true }); for (const p of layers) g.drawImage(p.cv, p.x, p.y); // cuts read it back
   seed = (Number(params.get('seed')) || CONFIG.seed) * 31 + i; // the cut is the same every time for a seed
-  const parts = o.cut === 'shapes' ? cutPicture(img, o) : layers;
+  const parts = splitIslands(o.cut === 'shapes' ? cutPicture(img, o) : layers);
   const sil = makeCanvas(ART_N, ART_N), s = sil.getContext('2d'); s.drawImage(img, 0, 0); s.globalCompositeOperation = 'source-in'; s.fillStyle = '#0d0a10'; s.fillRect(0, 0, ART_N, ART_N);
   const out = { parts, img, sil };
   seed = keep; // building art mid-game leaves the game's own random sequence as it was

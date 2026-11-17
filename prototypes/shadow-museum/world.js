@@ -143,6 +143,28 @@ function block(cv, depthArt) {
   return (cv[key] = { geo, face, side, w, h, mats: [face, side] });
 }
 const SIL = new T.MeshStandardMaterial({ color: '#1d1828', roughness: 0.32, metalness: 0.15 });
+// The object's real 3D model (models.js), a fresh copy each call that shares geometry and materials,
+// sized to its picture: as tall as the picture's box in art px (narrower if the picture is), standing
+// on y = 0, centred on x and z. An object with no model falls back to the inflated picture.
+const MODEL_PROTO = {}, ORIG_MAT = new WeakMap();
+function artBox(i) { const A = ARTS[i]; return A.box || (A.box = alphaBox(A.img.getContext('2d').getImageData(0, 0, ART_N, ART_N).data, 0, 0, ART_N, ART_N)); }
+function objectModel(i) {
+  const art = OBJECTS[i].art, box = artBox(i);
+  if (!MODEL_PROTO[art]) {
+    let raw; if (MODELS[art]) raw = MODELS[art](); else { const s = solidModel(i); raw = new T.Mesh(s.geo, s.mat); }
+    raw.updateMatrixWorld(true);
+    const bb = new T.Box3().setFromObject(raw), size = bb.getSize(new V3()), k = Math.min(box.h / size.y, box.w * 1.15 / size.x);
+    raw.position.sub(new V3((bb.min.x + bb.max.x) / 2, bb.min.y, (bb.min.z + bb.max.z) / 2));
+    const inner = new T.Group(); inner.add(raw); inner.scale.setScalar(k);
+    const proto = new T.Group(); proto.add(inner); proto.userData = { h: size.y * k, w: size.x * k, d: size.z * k };
+    proto.traverse(o => { if (o.isMesh) { o.castShadow = !CHEAP; o.receiveShadow = !CHEAP; } });
+    MODEL_PROTO[art] = proto;
+  }
+  return MODEL_PROTO[art].clone(true);
+}
+function setSil(g, on) { // a model all in shadow, or back in its own colours
+  g.traverse(o => { if (!o.isMesh) return; if (!ORIG_MAT.has(o)) ORIG_MAT.set(o, o.material); o.material = on ? SIL : ORIG_MAT.get(o); });
+}
 // ---- The object as a real solid ---------------------------------------------------------------------
 // The picture inflated into a round 3D shape: every point inside the outline lies in some circle that
 // fits inside it, and a ball of that circle's radius around each centre, all joined, gives the depth
@@ -395,7 +417,7 @@ function openPuzzle(cur) {
   if (PZ.ghost) { PZ.frame.remove(PZ.ghost); PZ.ghost = null; }
   setPuzzleLook(OBJECTS[cur.i].area);
   PZ.board = boardMesh(cur.i); PZ.board.material[0].color.set(PZ.topC); PZ.table.add(PZ.board);
-  const s = solidModel(cur.i); PZ.model = shade(new T.Mesh(s.geo, s.mat)); PZ.model.visible = false; PZ.solid = s; PZ.sc.add(PZ.model);
+  PZ.model = objectModel(cur.i); PZ.model.visible = false; PZ.mbox = artBox(cur.i); PZ.sc.add(PZ.model);
   PZ.cur = cur;
 }
 function renderPuzzle(dt) {
@@ -411,9 +433,9 @@ function renderPuzzle(dt) {
   const showObj = won && w > 0.3;
   PZ.model.visible = showObj;
   if (showObj) {
-    const b = PZ.solid.box, cx = (b.x + b.w / 2) * BS - BOARD.s / 2, cy = -((b.y + b.h / 2) * BS - BOARD.s / 2);
+    const b = PZ.mbox, u = PZ.model.userData, cx = (b.x + b.w / 2) * BS - BOARD.s / 2, by = -((b.y + b.h) * BS - BOARD.s / 2) + (b.h - u.h) / 2 * BS;
     const puff = easeOutBack((w - 0.3) / 0.7), fwd = easeInOut((w - 0.35) / 0.9), grow = 1 + 0.12 * fwd;
-    PZ.model.position.set(cx * (1 - fwd * 0.6), cy * (1 - fwd * 0.5) + fwd * 100, fwd * (PZ.solid.depth * BS * 0.5 + 120));
+    PZ.model.position.set(cx * (1 - fwd * 0.6), by * (1 - fwd * 0.25) + fwd * 40, fwd * (u.d * BS * 0.5 + 120));
     PZ.model.scale.set(BS * grow, BS * grow, BS * grow * Math.max(0.03, puff));
     const s = Math.max(0, w - 0.9); PZ.model.rotation.y = (s < 1 ? s * s * 0.9 : 0.9 + (s - 1) * 1.8) + (cur.spin || 0);
     PZ.model.rotation.x = 0.08 * fwd;
@@ -490,7 +512,7 @@ const HUB_SPOTS = {
     { x: 0, y: 200, z: -250, s: 165, stand: 'case' },
     { x: 0, y: 80, z: 330, s: 190, stand: 'plinth' },
   ],
-  kitchen: [ // teapot, cookie jar, mixer, coffee maker, pie, cake
+  kitchen: [ // teapot, cookie jar, mixer, toaster, pie, cake
     { x: -215, y: 232, z: -350, s: 200 },
     { x: -190, y: 222, z: 60, s: 200 },
     { x: 215, y: 232, z: -350, s: 220 },
@@ -672,10 +694,8 @@ function hubScene(a) {
   const C = HUB_CAM[key], cam = new T.PerspectiveCamera(C.fov, W / H, 10, 8000); H3.cam = cam; H3.C = C;
   HUB_SPOTS[key].forEach(sp => standFor(sc, sp, a));
   areaObjects(a).forEach((i, k) => {
-    const sp = HUB_SPOTS[key][k], b = solidModel(i), kk = sp.s / ART_N;
-    const m = shade(new T.Mesh(b.geo, b.mat)), g = new T.Group(); g.add(m);
-    m.scale.set(kk, kk, kk); m.position.set(0, b.box.h / 2 * kk, 0);
-    put(sc, g, sp.x, sp.y, sp.z); g.userData = { i, mesh: m, mats: b.mat, h: b.box.h * kk, w: b.box.w * kk };
+    const sp = HUB_SPOTS[key][k], kk = sp.s / ART_N, m = objectModel(i), g = new T.Group(); g.add(m); m.scale.setScalar(kk);
+    put(sc, g, sp.x, sp.y, sp.z); g.userData = { i, mesh: m, h: m.userData.h * kk, w: m.userData.w * kk };
     H3.objs.push(g);
   });
   return (HUBS[a] = H3);
@@ -699,7 +719,7 @@ function renderHub(a, view, dt) {
   const marks = {};
   for (const g of H3.objs) {
     const i = g.userData.i, done = view.done[i], m = g.userData.mesh;
-    m.material = done ? g.userData.mats : SIL;
+    setSil(m, !done);
     let s = 1, spin = 0, hop = 0;
     if (view.pop && view.pop.i === i) { const u = (t - view.pop.t) / 1.0; if (u < 1) { s = 0.2 + 0.8 * easeOutElastic(u); spin = (1 - easeOutCubic(u)) * Math.PI * 2; hop = Math.sin(Math.min(1, u * 1.6) * Math.PI) * 60; } }
     if (!done && view.next === i) hop = Math.abs(Math.sin(t * 3)) * 10;
@@ -725,8 +745,8 @@ function sc_add(sc, o) { sc.add(o); return o; }
 // The hub object under a screen point, front first, or -1.
 function hubPick(a, x, y) {
   const H3 = HUBS[a]; if (!H3) return -1;
-  const hits = rayAt(H3.cam, x, y).intersectObjects(H3.objs.map(g => g.userData.mesh), false);
-  return hits.length ? hits[0].object.parent.userData.i : -1;
+  const hits = rayAt(H3.cam, x, y).intersectObjects(H3.objs, true); if (!hits.length) return -1;
+  let o = hits[0].object; while (o && o.userData.i === undefined) o = o.parent; return o ? o.userData.i : -1;
 }
 
 // ---- Every object side by side, for the figures check ------------------------------------------------
@@ -736,7 +756,7 @@ function renderFigures(t) {
     const sc = new T.Scene(); sc.background = new T.Color('#efe3cf');
     lights(sc, { keyPos: new V3(-400, 800, 1200), shadowExtent: 1400 });
     const cam = new T.PerspectiveCamera(30, W / H, 10, 8000); cam.position.set(0, 0, 3000); cam.lookAt(0, 0, 0);
-    const objs = OBJECTS.map((o, i) => { const b = solidModel(i), m = shade(new T.Mesh(b.geo, b.mat)), k = 200 / ART_N; m.scale.setScalar(k); const g = new T.Group(); g.add(m); sc.add(g); g.userData = { i, k, b }; return g; });
+    const objs = OBJECTS.map((o, i) => { const m = objectModel(i), k = 200 / ART_N; m.scale.setScalar(k); m.position.y = -m.userData.h * k / 2; const g = new T.Group(); g.add(m); sc.add(g); g.userData = { i, k }; return g; });
     FIG = { sc, cam, objs };
   }
   const labels = [];
