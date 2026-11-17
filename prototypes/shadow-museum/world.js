@@ -438,7 +438,7 @@ function renderPuzzle(dt) {
     PZ.model.position.set(cx * (1 - fwd * 0.6), by * (1 - fwd * 0.25) + fwd * 40, fwd * (u.d * BS * 0.5 + 120));
     PZ.model.scale.set(BS * grow, BS * grow, BS * grow * Math.max(0.03, puff));
     const s = Math.max(0, w - 0.9); PZ.model.rotation.y = (s < 1 ? s * s * 0.9 : 0.9 + (s - 1) * 1.8) + (cur.spin || 0);
-    PZ.model.rotation.x = 0.08 * fwd;
+    PZ.model.rotation.x = 0.22 * fwd;
   }
   // the pieces, in the board frame
   const list = state.cur.pz.pieces.filter(p => !p.placed).sort((a, b) => a.slot - b.slot), d = cur.drag;
@@ -751,7 +751,8 @@ function hubPick(a, x, y) {
 
 // ---- Every object side by side, for the figures check ------------------------------------------------
 let FIG = null;
-function renderFigures(t) {
+// page 0: all 18 small and turning. page 1..3: six at a time, big; yaw (degrees) fixes the angle.
+function renderFigures(t, page = 0, yaw = null) {
   if (!FIG) {
     const sc = new T.Scene(); sc.background = new T.Color('#efe3cf');
     lights(sc, { keyPos: new V3(-400, 800, 1200), shadowExtent: 1400 });
@@ -761,9 +762,12 @@ function renderFigures(t) {
   }
   const labels = [];
   FIG.objs.forEach((g, i) => {
-    const col = i % 3, row = Math.floor(i / 3), x = (col - 1) * 300, y = 600 - row * 250;
-    g.position.set(x, y, 0); g.rotation.y = t * 0.8 + i; g.updateMatrixWorld(true);
-    labels.push({ i, ...toScreen(FIG.cam, new V3(x, y - 110, 0)) });
+    let x, y, s = 1, show = true;
+    if (page > 0) { const k = i - (page - 1) * 6; show = k >= 0 && k < 6; x = (k % 2 - 0.5) * 470; y = 520 - Math.floor(k / 2) * 500; s = 2.1; }
+    else { x = (i % 3 - 1) * 300; y = 600 - Math.floor(i / 3) * 250; }
+    g.visible = show; if (!show) return;
+    g.position.set(x, y, 0); g.scale.setScalar(s); g.rotation.y = yaw !== null && yaw !== '' ? Number(yaw) * Math.PI / 180 : t * 0.8 + i; g.rotation.x = page > 0 ? 0.12 : 0; g.updateMatrixWorld(true);
+    labels.push({ i, ...toScreen(FIG.cam, new V3(x, y - 110 * s - 8, 0)) });
   });
   FIG.cam.updateMatrixWorld(true);
   R.render(FIG.sc, FIG.cam);

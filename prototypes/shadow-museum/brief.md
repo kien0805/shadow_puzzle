@@ -21,6 +21,7 @@ After play: những miếng như này nên tách ra làm 2
 After play: với cả khối 3d đang trông như quả bóng bay xong đặt art 2d lên, t muốn n là cả khối 3d mũ như thật luôn tương tự với các level còn lại
 After play: kiểm tra các level còn lại có level nào có 2 mảng như vậy thì tách ra luôn, đồng thời level ở nhà bếp đang bị 2 cái giống nhau là máy pha cafe và máy đánh bột đổi 1 trong 2 cái thành cái khác đi
 After play: đổi tên game khác đi vì game có nhiều chủ đề r *(you chose: Shadow Pieces)*
+After play: dựng lại các modle 3d đi
 
 **Pitch:** Ba bối cảnh đầy bóng đen (bảo tàng, căn bếp ấm cúng, công viên thành phố): kéo từng mảnh của vật thể vào đúng chỗ trong bóng trước khi hết giờ để nó hiện ra; đủ 6 vật thì bối cảnh hoàn thành và mở bối cảnh tiếp theo.
 
@@ -63,7 +64,7 @@ Mỗi bối cảnh 6 màn, mở đầu dễ (chia theo bộ phận, 3–5 mảnh
 - [x] Nút đóng băng: dừng đồng hồ 8 giây, 1 lần mỗi màn
 - [x] Khay 5 ô cuộn ngang ở đáy màn
 - [x] 3D thật (three.js): mảnh và vật thành khối nhựa, bàn ghép tròn có bóng lõm, ba sảnh là phòng 3D; anim mượt khắp nơi
-- [x] Ghép xong vật thành mô hình 3D thật đủ 360 độ, dựng riêng cho cả 18 vật theo màu của tranh; tự xoay và vuốt để xoay; vật trong sảnh cũng là mô hình 3D đó (chưa xong thì đen bóng)
+- [x] Ghép xong vật thành mô hình 3D thật đủ 360 độ, dựng riêng cho cả 18 vật theo đúng số đo và chi tiết của tranh 2D (mảnh ghép xong khớp với mô hình); tự xoay và vuốt để xoay; vật trong sảnh cũng là mô hình 3D đó (chưa xong thì đen bóng)
 - [x] Mảnh nào gồm 2 cụm rời nhau (vd 2 quai bình) được tách thành 2 mảnh, ở mọi màn; vụn nhỏ như đinh tán vẫn dính với mảnh chính
 - [x] Căn bếp: máy pha cà phê đổi thành máy nướng bánh mì (giống máy đánh bột quá) *(you said: đổi 1 trong 2 cái thành cái khác)*
 - [x] Đồng hồ đếm ngược mỗi màn, đỏ và tích tắc 10 giây cuối, hết giờ thì chơi lại màn đó; sao theo thời gian còn lại

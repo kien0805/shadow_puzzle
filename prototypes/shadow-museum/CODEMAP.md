@@ -16,7 +16,7 @@ words, in order). Every change so far: `evidence/changes.tsv` and `git log -- pr
 |---|---|---|
 | `index.html` | ~100 KB | Rules, state, 2D art of the 18 objects, cutting into pieces, HUD (2D canvas on top), input, scenes, loop |
 | `world.js` | ~58 KB | Everything 3D (three.js, the canvas underneath): pieces and objects as meshes, the puzzle set, the 3 hub rooms. Draws only; holds no rules |
-| `models.js` | ~25 KB | `MODELS`: one builder per object (`OBJECTS[i].art`) that makes its real 3D model from three.js shapes, ~100 units tall, standing on y = 0. Kit at the top: `turn` (lathe), `tube`, `ring`, `box`, `cyl`, `ball`, `cone`, textures (amphora band, globe map, flowers, gingham, wicker, label, stripes) |
+| `models.js` | ~37 KB | `MODELS`: one builder per object (`OBJECTS[i].art`) that makes its real 3D model. **Built in the picture's own coordinates** (`AX`/`AY` turn ART x, y on the 480 square into model space), so each part sits where the 2D picture draws it; z is the added depth. Kit: `turn` (lathe from `[half-width, y]`), `cyl`, `ball`, `box`, `ext` (extrude a path), `tube`, `taper`, `ring`, `hoop`, `bez`/`quad`/`arcPts`, `onEllipsoid`. Textures per object (`amphoraTex`, `globeTex` wraps ART.globe onto the ball, `teapotTex`, `jarTex`, gingham, wicker, stripes, sign) |
 | `config.js` | ~6 KB | `window.CONFIG` (every tuning value: value/min/max/step), `AREAS` (3 scenes), `OBJECTS` (18 levels: area, art, name, time, cut style, pieces) |
 | `vendor/three.js` | 2.1 MB | three.js 0.186.1, core + module joined into one classic script (`window.THREE`) so the game plays from a double-click. Never read it |
 | `brief.md` | | The game brief (copy of `design/game-brief.md`) |
@@ -61,7 +61,7 @@ script. Classic scripts share top-level `const`s, so `world.js` reads `state`, `
   (`cur.spin`), tray press → `cur.drag` with `mode` `scroll` (sideways) or `piece`; drop → `tryDrop`.
 - **Keyboard**: arrows/Enter in hub; Q/E/Tab pick piece, arrows move `cur.cursor`, Space place, H magnet,
   F freeze, Esc back, M mute.
-- **Scenes**: `cuts` (2D gallery), `figures` (all 18 as 3D), `title`, `play`.
+- **Scenes**: `cuts` (2D gallery), `art` (the 2D pictures, `?page=1..3`), `figures` (all 18 as 3D; `?page=1..3` shows six big, `?yaw=deg` fixes the angle: use with `art` to compare a model to its picture), `title`, `play`.
 - **Loop**: `step()` fixed 60 Hz; `drawFrame()` draws the scene + the round reveal (iris) on screen change;
   `window.game` hook for the checks.
 
