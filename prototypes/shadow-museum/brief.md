@@ -1,4 +1,4 @@
-# Game Brief: Shadow Museum
+# Game Brief: Shadow Pieces
 
 ## In your words
 t nghĩ ra 1 idea sẽ có 1 bức tranh tổng thể có nhiều vật thể ví dụ như bảo tàng có 5-6 cái tượng chẳng hạn (có thể thay tượng bằng loại khác cũng được nhưng trong 1 bức tranh không được có vật thể giống nhau). Và mỗi vật thể đỏ sẽ không được hiện hình mà chỉ  hiện màn đen, mỗi vật thể sẽ là 1 level cần vượt qua. User cần phải giải câu đố bằng cách ghép đủ các hình khối vào sao cho hoàn thiện hình thì mới có thể qua level và hoàn thành vật thể đó nghĩ thêm thử từ idea này đi
@@ -20,6 +20,7 @@ After play: sửa lại nhé t muốn cái platform này n phải nằm đứng 
 After play: những miếng như này nên tách ra làm 2
 After play: với cả khối 3d đang trông như quả bóng bay xong đặt art 2d lên, t muốn n là cả khối 3d mũ như thật luôn tương tự với các level còn lại
 After play: kiểm tra các level còn lại có level nào có 2 mảng như vậy thì tách ra luôn, đồng thời level ở nhà bếp đang bị 2 cái giống nhau là máy pha cafe và máy đánh bột đổi 1 trong 2 cái thành cái khác đi
+After play: đổi tên game khác đi vì game có nhiều chủ đề r *(you chose: Shadow Pieces)*
 
 **Pitch:** Ba bối cảnh đầy bóng đen (bảo tàng, căn bếp ấm cúng, công viên thành phố): kéo từng mảnh của vật thể vào đúng chỗ trong bóng trước khi hết giờ để nó hiện ra; đủ 6 vật thì bối cảnh hoàn thành và mở bối cảnh tiếp theo.
 

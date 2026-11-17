@@ -1,7 +1,7 @@
 <!-- PROTOTYPE - NOT FOR PRODUCTION -->
 <!-- Question: Kéo từng bộ phận của vật thể vào bóng đen cho nó hiện ra có đủ vui để làm hết 6 vật không? -->
 <!-- Date: 2026-11-17 -->
-# Shadow Museum — code map
+# Shadow Pieces — code map
 
 Read this first instead of reading the code. Open only the section a change needs: find it with
 Grep on the function name or the `// ---- <section>` header named below (line numbers drift).

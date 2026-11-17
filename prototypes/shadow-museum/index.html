@@ -6,7 +6,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Shadow Museum</title>
+<title>Shadow Pieces</title>
 <style>
   html, body { margin: 0; height: 100%; background: #2a2330; overflow: hidden; touch-action: none; }
   body { font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }
@@ -22,7 +22,7 @@
 <script src="world.js"></script>
 <script>
 'use strict';
-// Shadow Museum: drag each object's parts into its black shadow until the object shows.
+// Shadow Pieces: drag each object's parts into its black shadow until the object shows.
 
 // ---- Built to be checked ----------------------------------------------------------------
 const params = new URLSearchParams(location.search);
@@ -31,7 +31,7 @@ const STEP = 1 / 60;
 const W = 720, H = 1280;
 const PIXEL = false;
 const FONT = '"Segoe UI", system-ui, sans-serif';
-const TITLE = 'Shadow Museum';
+const TITLE = 'Shadow Pieces';
 const CONTROLS = [
   'Chạm một bóng đen để mở',
   'Kéo mảnh từ khay vào đúng chỗ, vuốt khay để cuộn',
@@ -1296,7 +1296,7 @@ const scenes = {
       ctx.fillStyle = lin(ctx, 0, 0, 0, H, [[0, 'rgba(30,18,50,0.65)'], [0.35, 'rgba(30,18,50,0.15)'], [0.7, 'rgba(30,18,50,0.2)'], [1, 'rgba(30,18,50,0.8)']]); ctx.fillRect(0, 0, W, H);
       const k1 = easeOutBack(state.t / 0.6), k2 = easeOutBack((state.t - 0.15) / 0.6);
       ctx.save(); scaleAbout(W / 2, 150, k1); outText('Shadow', W / 2, 150 + Math.sin(state.t * 2) * 4, 104, '#fff', '#5a35ab'); ctx.restore();
-      ctx.save(); scaleAbout(W / 2, 255, k2); outText('Museum', W / 2, 255 + Math.sin(state.t * 2 + 1) * 4, 104, PAL.gold[0], '#5a35ab'); ctx.restore();
+      ctx.save(); scaleAbout(W / 2, 255, k2); outText('Pieces', W / 2, 255 + Math.sin(state.t * 2 + 1) * 4, 104, PAL.gold[0], '#5a35ab'); ctx.restore();
       outText('Ghép mảnh vào bóng đen để vật hiện ra', W / 2, 340, 28, '#fff', '#3a2357', '800');
       fillRR(40, 800, 640, 250, 30, 'rgba(30,18,50,0.6)'); strokeRR(40, 800, 640, 250, 30, 'rgba(255,255,255,0.5)', 3);
       CONTROLS.forEach((c, i) => text(c, W / 2, 836 + i * 44, 21, '#fff8ec', 'center', '700'));

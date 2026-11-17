@@ -1,7 +1,7 @@
 // PROTOTYPE - NOT FOR PRODUCTION
 // Question: Kéo từng bộ phận của vật thể vào bóng đen cho nó hiện ra có đủ vui để làm hết 6 vật không?
 // Date: 2026-11-17
-// The 3D side of Shadow Museum, drawn with three.js (vendor/three.js). The 2D art of every piece
+// The 3D side of Shadow Pieces, drawn with three.js (vendor/three.js). The 2D art of every piece
 // and object is traced into outlines and pushed out into thick, glossy toy blocks; the puzzle is a
 // round board with the object's shadow pressed into it; each scene's hub is a small 3D room.
 // The rules stay in index.html: this file only draws, and answers "where is that on the screen".

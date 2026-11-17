@@ -20,7 +20,7 @@ Each agent owns a specific domain, enforcing separation of concerns and quality.
 
 ## Current Game
 
-The game being worked on is `prototypes/shadow-museum/` (browser, three.js). Before reading its
+The game being worked on is Shadow Pieces (formerly Shadow Museum), in `prototypes/shadow-museum/` (browser, three.js). Before reading its
 code, read `prototypes/shadow-museum/CODEMAP.md`: it maps every file, section and key function, so
 open only the part a change needs. Update CODEMAP in the same commit as any change it describes.
 
