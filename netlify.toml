@@ -1,0 +1,6 @@
+# Netlify publishes the game, Shadow Pieces, from prototypes/shadow-museum/.
+# The build only copies the files a player needs into site/ (no brief, evidence or code map),
+# the same set one-shot-share.sh puts in dist/. Nothing is compiled.
+[build]
+  command = "rm -rf site && mkdir -p site/vendor && cp prototypes/shadow-museum/index.html prototypes/shadow-museum/config.js prototypes/shadow-museum/models.js prototypes/shadow-museum/world.js site/ && cp prototypes/shadow-museum/vendor/three.js site/vendor/ && cp -r prototypes/shadow-museum/assets site/"
+  publish = "site"
